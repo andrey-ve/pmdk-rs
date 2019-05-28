@@ -1,0 +1,17 @@
+[package]
+name = "pmdk"
+description = "Rust wrapper pmdk"
+version = "0.0.1"
+authors = ["Andrey Vesnovaty <andrey.vesnovaty@gmail.com>"]
+license = "Apache-2.0"
+edition = "2018"
+exclude = [
+    ".gitignore",
+    ".travis.yml",
+    "deploy.sh",
+    "test/**/*",
+]
+
+[dependencies]
+libc = "0.2"
+pmdk-sys = { path = "pmdk-sys" }
