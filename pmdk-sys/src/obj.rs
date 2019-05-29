@@ -1,5 +1,5 @@
-use ::libc::{size_t, mode_t};
-use ::libc::{c_void, c_char, c_int};
+use libc::{size_t, mode_t};
+use libc::{c_void, c_char, c_int};
 
 
 pub enum PMEMobjpool {}
