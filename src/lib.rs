@@ -5,9 +5,10 @@ use std::ffi::{CStr, CString};
 use std::path::Path;
 
 use pmdk_sys::obj::{
-    pmemobj_close, pmemobj_create, pmemobj_errormsg, PMEMobjpool as SysPMEMobjpool,
+    pmemobj_alloc, pmemobj_close, pmemobj_constr, pmemobj_create, pmemobj_errormsg,
+    PMEMobjpool as SysPMEMobjpool
 };
-//use pmdk_sys::pmem_persist;
+use pmdk_sys::{pmem_persist, PMEMoid};
 
 fn errormsg() -> Result<String, ()> {
     unsafe {
@@ -56,6 +57,12 @@ impl ObjPool {
         } else {
             Ok(Self { inner: sys_pool })
         }
+    }
+
+    pub fn put(&self, data: &[u8]) -> Result<u64, ()> {
+        unsafe {}
+
+        Err(())
     }
 }
 

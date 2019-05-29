@@ -1,9 +1,13 @@
 use libc::{size_t, mode_t};
 use libc::{c_void, c_char, c_int};
 
+use crate::PMEMoid;
+
 
 pub enum PMEMobjpool {}
 
+#[allow(non_camel_case_types)]
+pub type pmemobj_constr = unsafe extern "C" fn(pop: *mut PMEMobjpool, ptr: *mut c_void, arg: *mut c_void) -> c_int;
 
 #[allow(dead_code)]
 #[link(name = "pmemobj")]
@@ -15,6 +19,15 @@ extern "C" {
                           mode: mode_t)
                           -> *mut PMEMobjpool;
     pub fn pmemobj_close(pop: *mut PMEMobjpool);
+
+    pub fn pmemobj_alloc(pop: *mut PMEMobjpool,
+                         oidp: *mut PMEMoid,
+                         size: size_t,
+                         type_num: u64,
+                         constructor: pmemobj_constr,
+                         arg: *mut c_void
+    ) -> c_int;
+
     pub fn pmemobj_memcpy_persist(pop: *mut PMEMobjpool,
                                   dest: *mut c_void,
                                   src: *const c_void,
@@ -27,5 +40,7 @@ extern "C" {
     // Error handling:
 
     pub fn pmemobj_errormsg() -> *const c_char;
+
+    pub fn pmemobj_direct(oid: PMEMoid) -> *mut c_void;
 }
 

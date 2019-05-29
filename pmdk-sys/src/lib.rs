@@ -5,7 +5,12 @@
 use libc::{size_t, mode_t};
 use libc::{c_void, c_char, c_int, c_uint};
 
+
+mod base;
+
 pub mod obj;
+
+pub use base::PMEMoid;
 
 #[allow(dead_code)]
 #[link(name = "pmem")]
