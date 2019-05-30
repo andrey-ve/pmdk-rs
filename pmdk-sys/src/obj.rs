@@ -20,6 +20,8 @@ extern "C" {
                           -> *mut PMEMobjpool;
     pub fn pmemobj_close(pop: *mut PMEMobjpool);
 
+    // Object
+
     pub fn pmemobj_alloc(pop: *mut PMEMobjpool,
                          oidp: *mut PMEMoid,
                          size: size_t,
@@ -27,6 +29,7 @@ extern "C" {
                          constructor: pmemobj_constr,
                          arg: *mut c_void
     ) -> c_int;
+    pub fn pmemobj_free(oidp: *mut PMEMoid);
 
     pub fn pmemobj_memcpy_persist(pop: *mut PMEMobjpool,
                                   dest: *mut c_void,

@@ -8,8 +8,8 @@ use std::fmt;
 #[derive(Copy, Clone)]
 pub struct pmemoid
 {
-    pub pool_uuid_lo: u64,
-    pub off: u64,
+    pool_uuid_lo: u64,
+    off: u64,
 }
 
 impl Default for pmemoid
@@ -31,6 +31,10 @@ impl fmt::Debug for pmemoid
 }
 
 impl pmemoid {
+    pub fn new(pool_uuid_lo: u64, off: u64) -> Self {
+        Self { pool_uuid_lo, off }
+    }
+
     pub fn off(&self) -> u64 {
         self.off
     }
