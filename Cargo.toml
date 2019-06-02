@@ -1,7 +1,7 @@
 [package]
 name = "pmdk"
 description = "Rust wrapper for pmdk"
-version = "0.0.1"
+version = "0.0.2"
 authors = ["RepliXio Developers <open.source@replixio.com>"]
 license = "Apache-2.0 OR MIT"
 keywords = ["pmdk", "pmem", "pmemio"]
@@ -20,4 +20,4 @@ maintenance = { status = "experimental" }
 
 [dependencies]
 libc = "0.2"
-pmdk-sys = { path = "pmdk-sys", version = "0.0.1" }
+pmdk-sys = { path = "pmdk-sys", version = "0.0.2" }
