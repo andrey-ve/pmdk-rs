@@ -20,4 +20,4 @@ maintenance = { status = "experimental" }
 
 [dependencies]
 libc = "0.2"
-pmdk-sys = { path = "pmdk-sys" }
+pmdk-sys = { path = "pmdk-sys", version = "0.0.1" }
