@@ -1,9 +1,12 @@
 [package]
 name = "pmdk-sys"
-description = "Native bindings pmdk"
+description = "FFI bindings to pmdk"
 version = "0.0.1"
-authors = ["Andrey Vesnovaty <andrey.vesnovaty@gmail.com>"]
-license = "Apache-2.0"
+authors = ["RepliXio Developers <open.source@replixio.com>"]
+license = "Apache-2.0 OR MIT"
+keywords = ["pmdk", "pmem", "pmemio", "libpmem", "libpmemobj"]
+readme = "README.md"
+repository = "https://github.com/pmdk-rs.git"
 edition = "2018"
 exclude = [
     ".gitignore",

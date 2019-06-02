@@ -1,9 +1,12 @@
 [package]
 name = "pmdk"
-description = "Rust wrapper pmdk"
+description = "Rust wrapper for pmdk"
 version = "0.0.1"
-authors = ["Andrey Vesnovaty <andrey.vesnovaty@gmail.com>"]
-license = "Apache-2.0"
+authors = ["RepliXio Developers <open.source@replixio.com>"]
+license = "Apache-2.0 OR MIT"
+keywords = ["pmdk", "pmem", "pmemio"]
+readme = "README.md"
+repository = "https://github.com/pmdk-rs.git"
 edition = "2018"
 exclude = [
     ".gitignore",
@@ -11,6 +14,9 @@ exclude = [
     "deploy.sh",
     "test/**/*",
 ]
+
+[badges]
+maintenance = { status = "experimental" }
 
 [dependencies]
 libc = "0.2"
