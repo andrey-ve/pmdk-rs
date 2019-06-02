@@ -1,6 +1,8 @@
-/*
- * TODO: add header
- */
+//
+// Copyright (c) 2019 RepliXio Ltd. All rights reserved.
+// Use is subject to license terms.
+//
+
 use std::fmt;
 
 

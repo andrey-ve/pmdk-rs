@@ -1,6 +1,7 @@
-/*
- * TODO: add header
- */
+//
+// Copyright (c) 2019 RepliXio Ltd. All rights reserved.
+// Use is subject to license terms.
+//
 
 use libc::{size_t, mode_t};
 use libc::{c_void, c_char, c_int, c_uint};

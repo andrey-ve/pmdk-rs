@@ -1,3 +1,8 @@
+//
+// Copyright (c) 2019 RepliXio Ltd. All rights reserved.
+// Use is subject to license terms.
+//
+
 use libc::{c_char, c_int, c_void};
 use libc::{mode_t, size_t};
 use std::ffi::{CStr, CString};
