@@ -210,23 +210,64 @@ mod tests {
 
             obj_pool.unwrap()
         };
-        println!("MEM pool create: done!");
+        println!("create:: MEM pool create: done!");
 
         let mut keys_vals = (0..10)
             .map(|i| {
-                let buf = vec![0xafu8; 0x400]; // 4k
+                let buf = vec![0xafu8; 0x1000]; // 4k
                 let key = obj_pool.put(&buf, i as u64);
                 assert!(key.is_ok());
                 (key.unwrap(), buf)
             })
             .collect::<Vec<_>>();
-        println!("MEM put: done!");
+        println!("create:: MEM put: done!");
 
-        keys_vals.into_iter().map(|(key, val)| {
+        keys_vals.into_iter().for_each(|(key, val)| {
             let mut buf = Vec::with_capacity(val.len());
-            unsafe { obj_pool.get(key, &mut buf) };
+            unsafe {
+                buf.set_len(val.len());
+                obj_pool.get(key, &mut buf);
+            }
             assert_eq!(buf, val);
         });
-        println!("MEM get: done!");
+        println!("create:: MEM get: done!");
+    }
+
+    #[test]
+    fn preallocate() {
+        let (obj_pool, aqueue) = {
+            let path = PathBuf::from_str("__pmdk_basic__preallocate_test.obj").unwrap();
+            let obj_size = 0x1000; // 4k
+            let capacity = 0x800; // 2k
+
+            let res = ObjPool::with_capacity::<_, String>(&path, None, obj_size, capacity);
+            assert!(res.is_ok());
+
+            res.unwrap()
+        };
+
+        println!("preallocate:: allocated {} objects", aqueue.len());
+
+        let mut keys_vals = (0..10)
+            .map(|_| {
+                let buf = vec![0xafu8; 0x1000]; // 4k
+                let rkey = aqueue.pop();
+                assert!(rkey.is_ok());
+                let rkey = rkey.unwrap();
+                obj_pool.update_by_rawkey(rkey, &buf);
+                (rkey, buf)
+            })
+            .collect::<Vec<_>>();
+        println!("preallocate:: MEM put: done!");
+
+        keys_vals.into_iter().for_each(|(rkey, val)| {
+            let mut buf = Vec::with_capacity(val.len());
+            unsafe {
+                buf.set_len(val.len());
+                obj_pool.get_by_rawkey(rkey, &mut buf);
+            }
+            assert_eq!(buf, val);
+        });
+        println!("preallocate:: MEM get: done!");
     }
 }
