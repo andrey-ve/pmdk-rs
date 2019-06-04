@@ -3,6 +3,8 @@
 // Use is subject to license terms.
 //
 
+#![doc(html_root_url = "https://docs.rs/pmdk/0.0.3")]
+
 use libc::{c_char, c_int, c_void};
 use libc::{mode_t, size_t};
 use std::ffi::{CStr, CString};

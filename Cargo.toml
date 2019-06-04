@@ -1,12 +1,13 @@
 [package]
 name = "pmdk"
 description = "Rust wrapper for pmdk"
-version = "0.0.2"
+version = "0.0.3"
 authors = ["RepliXio Developers <open.source@replixio.com>"]
 license = "Apache-2.0 OR MIT"
 keywords = ["pmdk", "pmem", "pmemio"]
 readme = "README.md"
 repository = "https://github.com/pmdk-rs.git"
+documentation = "https://docs.rs/pmdk"
 edition = "2018"
 exclude = [
     ".gitignore",
@@ -21,4 +22,4 @@ maintenance = { status = "experimental" }
 [dependencies]
 crossbeam-queue = "0.1.2"
 libc = "0.2"
-pmdk-sys = { path = "pmdk-sys", version = "0.0.2" }
+pmdk-sys = { path = "pmdk-sys", version = "0.0.3" }
