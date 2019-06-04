@@ -9,6 +9,8 @@ use std::ffi::{CStr, CString};
 
 use std::path::Path;
 
+use crossbeam_queue::ArrayQueue;
+
 use pmdk_sys::obj::{
     pmemobj_alloc, pmemobj_close, pmemobj_create, pmemobj_direct, pmemobj_errormsg, pmemobj_free,
     pmemobj_memcpy_persist, PMEMobjpool as SysPMEMobjpool,
@@ -59,6 +61,15 @@ fn alloc(pop: *mut SysPMEMobjpool, size: usize, data_type: u64) -> Result<PMEMoi
     }
 }
 
+const OBJ_HEADER_SIZE: usize = 64;
+const OBJ_ALLOC_FACTOR: usize = 3;
+
+fn pool_size(capacity: usize, obj_size: usize) -> usize {
+    (capacity * (obj_size + OBJ_HEADER_SIZE)) * OBJ_ALLOC_FACTOR
+}
+
+pub type ObjRawKey = *mut c_void;
+
 pub struct ObjPool {
     inner: *mut SysPMEMobjpool,
     uuid_lo: u64,
@@ -67,11 +78,11 @@ pub struct ObjPool {
 // TODO: define error
 
 impl ObjPool {
-    pub fn new<P: AsRef<Path>, S: Into<String>>(
+    fn with_layout<P: AsRef<Path>, S: Into<String>>(
         path: P,
         layout: Option<S>,
         size: usize,
-    ) -> Result<Self, ()> {
+    ) -> Result<*mut SysPMEMobjpool, ()> {
         let path = path.as_ref().to_string_lossy();
         // TODO: remove unwrap
         let layout = layout.map_or_else(
@@ -93,6 +104,16 @@ impl ObjPool {
             let _ = errormsg().map(|msg| println!("pmemobj_create failed: {}", msg));
             Err(())
         } else {
+            Ok(inner)
+        }
+    }
+
+    pub fn new<P: AsRef<Path>, S: Into<String>>(
+        path: P,
+        layout: Option<S>,
+        size: usize,
+    ) -> Result<Self, ()> {
+        Self::with_layout(path, layout, size).and_then(|inner| {
             // Can't reach sys_pool->uuid_lo field => allocating object to get it
             // TODO: use root object for this workaround
             alloc(inner, 1, 10000).map(|mut oid| {
@@ -100,6 +121,36 @@ impl ObjPool {
                 unsafe { pmemobj_free(&mut oid as *mut PMEMoid) };
                 Self { inner, uuid_lo }
             })
+        })
+    }
+
+    pub fn with_capacity<P: AsRef<Path>, S: Into<String>>(
+        path: P,
+        layout: Option<S>,
+        obj_size: usize,
+        capacity: usize,
+    ) -> Result<(Self, ArrayQueue<ObjRawKey>), ()> {
+        let poolsize = pool_size(capacity, obj_size);
+        let pool = Self::new(path, layout, poolsize)?;
+        let inner = pool.inner;
+        let mut aqueue = ArrayQueue::new(capacity);
+
+        /* pre allocate as much objects as possible up to capacity */
+        let _ = (0..capacity)
+            .take_while(|_| {
+                alloc(inner, obj_size, 1)
+                    .map(|mut oid| aqueue.push(unsafe { pmemobj_direct(oid) }))
+                    .is_ok()
+            })
+            .collect::<Vec<_>>();
+        Ok((pool, aqueue))
+    }
+
+    pub fn update_by_rawkey(&self, rkey: ObjRawKey, data: &[u8]) {
+        unsafe {
+            let src = data.as_ptr() as *const c_void;
+            let size = size_t::from(data.len());
+            pmemobj_memcpy_persist(self.inner, rkey, src, size);
         }
     }
 
@@ -124,6 +175,10 @@ impl ObjPool {
         let oid = PMEMoid::new(self.uuid_lo, key);
         let raw = pmemobj_direct(oid);
         buf.copy_from_slice(std::slice::from_raw_parts(raw as *const u8, buf.len()));
+    }
+
+    pub unsafe fn get_by_rawkey(&self, rkey: ObjRawKey, buf: &mut [u8]) {
+        buf.copy_from_slice(std::slice::from_raw_parts(rkey as *const u8, buf.len()));
     }
 }
 
