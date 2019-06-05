@@ -7,7 +7,9 @@
 
 use libc::{c_char, c_int, c_void};
 use libc::{mode_t, size_t};
+use std::convert::{From, Into, TryInto};
 use std::ffi::{CStr, CString};
+use std::option::Option;
 
 use std::path::Path;
 
@@ -135,25 +137,39 @@ impl ObjPool {
         let poolsize = pool_size(capacity, obj_size);
         let pool = Self::new(path, layout, poolsize)?;
         let inner = pool.inner;
-        let mut aqueue = ArrayQueue::new(capacity);
+        let aqueue = ArrayQueue::new(capacity);
 
         /* pre allocate as much objects as possible up to capacity */
         let _ = (0..capacity)
             .take_while(|_| {
                 alloc(inner, obj_size, 1)
-                    .map(|mut oid| aqueue.push(unsafe { pmemobj_direct(oid) }))
+                    .map(|oid| aqueue.push(unsafe { pmemobj_direct(oid) }))
                     .is_ok()
             })
             .collect::<Vec<_>>();
         Ok((pool, aqueue))
     }
 
-    pub fn update_by_rawkey(&self, rkey: ObjRawKey, data: &[u8]) {
+    pub unsafe fn key_to_raw(&self, key: u64) -> ObjRawKey {
+        pmemobj_direct(PMEMoid::new(self.uuid_lo, key))
+    }
+
+    pub fn update_by_rawkey<O>(&self, rkey: ObjRawKey, data: &[u8], offset: O) -> Result<(), ()>
+    where
+        O: Into<Option<usize>>,
+    {
+        let offset = offset
+            .into()
+            .unwrap_or_default()
+            .try_into()
+            .map_err(|_| ())?;
+        let src = data.as_ptr() as *const c_void;
+        let size = size_t::from(data.len());
         unsafe {
-            let src = data.as_ptr() as *const c_void;
-            let size = size_t::from(data.len());
-            pmemobj_memcpy_persist(self.inner, rkey, src, size);
+            let dest = rkey.offset(offset);
+            pmemobj_memcpy_persist(self.inner, dest, src, size);
         }
+        Ok(())
     }
 
     fn put_data(&self, oid: PMEMoid, data: &[u8]) {
@@ -172,15 +188,13 @@ impl ObjPool {
         })
     }
 
-    // TODO: this is one of many interfaces for known size data retrieval
-    pub unsafe fn get(&self, key: u64, buf: &mut [u8]) {
-        let oid = PMEMoid::new(self.uuid_lo, key);
-        let raw = pmemobj_direct(oid);
-        buf.copy_from_slice(std::slice::from_raw_parts(raw as *const u8, buf.len()));
-    }
-
     pub unsafe fn get_by_rawkey(&self, rkey: ObjRawKey, buf: &mut [u8]) {
         buf.copy_from_slice(std::slice::from_raw_parts(rkey as *const u8, buf.len()));
+    }
+
+    // TODO: this is one of many interfaces for known size data retrieval
+    pub unsafe fn get(&self, key: u64, buf: &mut [u8]) {
+        self.get_by_rawkey(self.key_to_raw(key), buf);
     }
 }
 
@@ -196,10 +210,22 @@ impl Drop for ObjPool {
 
 #[cfg(test)]
 mod tests {
-    use std::path::{Path, PathBuf};
+    use std::path::PathBuf;
     use std::str::FromStr;
 
     use super::ObjPool;
+    use crate::ObjRawKey;
+
+    fn verify_objs(obj_pool: &ObjPool, keys_vals: Vec<(ObjRawKey, Vec<u8>)>) {
+        keys_vals.into_iter().for_each(|(rkey, val)| {
+            let mut buf = Vec::with_capacity(val.len());
+            unsafe {
+                buf.set_len(val.len());
+                obj_pool.get_by_rawkey(rkey, &mut buf);
+            }
+            assert_eq!(buf, val);
+        });
+    }
 
     #[test]
     fn create() {
@@ -214,24 +240,18 @@ mod tests {
         };
         println!("create:: MEM pool create: done!");
 
-        let mut keys_vals = (0..10)
+        let keys_vals = (0..10)
             .map(|i| {
                 let buf = vec![0xafu8; 0x1000]; // 4k
                 let key = obj_pool.put(&buf, i as u64);
                 assert!(key.is_ok());
-                (key.unwrap(), buf)
+                let rkey = unsafe { obj_pool.key_to_raw(key.unwrap()) };
+                (rkey, buf)
             })
             .collect::<Vec<_>>();
         println!("create:: MEM put: done!");
 
-        keys_vals.into_iter().for_each(|(key, val)| {
-            let mut buf = Vec::with_capacity(val.len());
-            unsafe {
-                buf.set_len(val.len());
-                obj_pool.get(key, &mut buf);
-            }
-            assert_eq!(buf, val);
-        });
+        verify_objs(&obj_pool, keys_vals);
         println!("create:: MEM get: done!");
     }
 
@@ -250,26 +270,35 @@ mod tests {
 
         println!("preallocate:: allocated {} objects", aqueue.len());
 
-        let mut keys_vals = (0..10)
+        let keys_vals = (0..10)
             .map(|_| {
                 let buf = vec![0xafu8; 0x1000]; // 4k
                 let rkey = aqueue.pop();
                 assert!(rkey.is_ok());
                 let rkey = rkey.unwrap();
-                obj_pool.update_by_rawkey(rkey, &buf);
+                assert!(obj_pool.update_by_rawkey(rkey, &buf, None).is_ok());
                 (rkey, buf)
             })
             .collect::<Vec<_>>();
         println!("preallocate:: MEM put: done!");
 
-        keys_vals.into_iter().for_each(|(rkey, val)| {
-            let mut buf = Vec::with_capacity(val.len());
-            unsafe {
-                buf.set_len(val.len());
-                obj_pool.get_by_rawkey(rkey, &mut buf);
-            }
-            assert_eq!(buf, val);
-        });
+        let keys = keys_vals.iter().map(|(key, _)| *key).collect::<Vec<_>>();
+        verify_objs(&obj_pool, keys_vals);
         println!("preallocate:: MEM get: done!");
+
+        let keys_vals = keys
+            .iter()
+            .map(|rkey| {
+                let mut buf1 = vec![0xafu8; 0x800]; // 2k
+                let mut buf2 = vec![0xbcu8; 0x800]; // 2k
+                assert!(obj_pool.update_by_rawkey(*rkey, &buf2, buf1.len()).is_ok());
+                buf1.append(&mut buf2);
+                (*rkey, buf1)
+            })
+            .collect::<Vec<_>>();
+        println!("preallocate:: MEM put partial: done!");
+
+        verify_objs(&obj_pool, keys_vals);
+        println!("preallocate:: MEM get partial: done!");
     }
 }
