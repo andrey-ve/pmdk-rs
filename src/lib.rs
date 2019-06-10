@@ -21,7 +21,7 @@ use pmdk_sys::obj::{
 };
 use pmdk_sys::PMEMoid;
 
-use crate::error::{Error, Kind as ErrorKind, WrapErr};
+pub use crate::error::{Error, Kind as ErrorKind, WrapErr};
 
 mod error;
 
