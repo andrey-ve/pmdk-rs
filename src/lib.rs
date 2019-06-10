@@ -8,7 +8,7 @@
 use libc::{c_char, c_int, c_void};
 use libc::{mode_t, size_t};
 use std::convert::{From, Into, TryInto};
-use std::ffi::{CStr, CString};
+use std::ffi::CString;
 use std::option::Option;
 
 use std::path::Path;
@@ -16,21 +16,14 @@ use std::path::Path;
 use crossbeam_queue::ArrayQueue;
 
 use pmdk_sys::obj::{
-    pmemobj_alloc, pmemobj_close, pmemobj_create, pmemobj_direct, pmemobj_errormsg, pmemobj_free,
+    pmemobj_alloc, pmemobj_close, pmemobj_create, pmemobj_direct, pmemobj_free,
     pmemobj_memcpy_persist, PMEMobjpool as SysPMEMobjpool,
 };
 use pmdk_sys::PMEMoid;
 
-fn errormsg() -> Result<String, ()> {
-    unsafe {
-        let msg = pmemobj_errormsg();
-        if msg.is_null() {
-            Err(())
-        } else {
-            CStr::from_ptr(msg).to_owned().into_string().map_err(|_| ())
-        }
-    }
-}
+use crate::error::{Error, Kind as ErrorKind, WrapErr};
+
+mod error;
 
 // TODO: need this or null func pointer
 #[no_mangle]
@@ -42,7 +35,7 @@ unsafe extern "C" fn obj_constr_none(
     0
 }
 
-fn alloc(pop: *mut SysPMEMobjpool, size: usize, data_type: u64) -> Result<PMEMoid, ()> {
+fn alloc(pop: *mut SysPMEMobjpool, size: usize, data_type: u64) -> Result<PMEMoid, Error> {
     let mut oid = PMEMoid::default();
     let oidp = &mut oid;
 
@@ -60,8 +53,7 @@ fn alloc(pop: *mut SysPMEMobjpool, size: usize, data_type: u64) -> Result<PMEMoi
     if status == 0 {
         Ok(oid)
     } else {
-        let _ = errormsg().map(|msg| println!("pmemobj_alloc failed: {}", msg));
-        Err(())
+        Err(Error::obj_error())
     }
 }
 
@@ -79,14 +71,12 @@ pub struct ObjPool {
     uuid_lo: u64,
 }
 
-// TODO: define error
-
 impl ObjPool {
     fn with_layout<P: AsRef<Path>, S: Into<String>>(
         path: P,
         layout: Option<S>,
         size: usize,
-    ) -> Result<*mut SysPMEMobjpool, ()> {
+    ) -> Result<*mut SysPMEMobjpool, Error> {
         let path = path.as_ref().to_string_lossy();
         // TODO: remove unwrap
         let layout = layout.map_or_else(
@@ -105,8 +95,7 @@ impl ObjPool {
         };
 
         if inner.is_null() {
-            let _ = errormsg().map(|msg| println!("pmemobj_create failed: {}", msg));
-            Err(())
+            Err(Error::obj_error())
         } else {
             Ok(inner)
         }
@@ -116,7 +105,7 @@ impl ObjPool {
         path: P,
         layout: Option<S>,
         size: usize,
-    ) -> Result<Self, ()> {
+    ) -> Result<Self, Error> {
         Self::with_layout(path, layout, size).and_then(|inner| {
             // Can't reach sys_pool->uuid_lo field => allocating object to get it
             // TODO: use root object for this workaround
@@ -133,7 +122,7 @@ impl ObjPool {
         layout: Option<S>,
         obj_size: usize,
         capacity: usize,
-    ) -> Result<(Self, ArrayQueue<ObjRawKey>), ()> {
+    ) -> Result<(Self, ArrayQueue<ObjRawKey>), Error> {
         let poolsize = pool_size(capacity, obj_size);
         let pool = Self::new(path, layout, poolsize)?;
         let inner = pool.inner;
@@ -154,7 +143,7 @@ impl ObjPool {
         pmemobj_direct(PMEMoid::new(self.uuid_lo, key))
     }
 
-    pub fn update_by_rawkey<O>(&self, rkey: ObjRawKey, data: &[u8], offset: O) -> Result<(), ()>
+    pub fn update_by_rawkey<O>(&self, rkey: ObjRawKey, data: &[u8], offset: O) -> Result<(), Error>
     where
         O: Into<Option<usize>>,
     {
@@ -162,7 +151,7 @@ impl ObjPool {
             .into()
             .unwrap_or_default()
             .try_into()
-            .map_err(|_| ())?;
+            .wrap_err(ErrorKind::GenericError)?;
         let src = data.as_ptr() as *const c_void;
         let size = size_t::from(data.len());
         unsafe {
@@ -181,7 +170,7 @@ impl ObjPool {
         }
     }
 
-    pub fn put(&self, data: &[u8], data_type: u64) -> Result<u64, ()> {
+    pub fn put(&self, data: &[u8], data_type: u64) -> Result<u64, Error> {
         alloc(self.inner, data.len(), data_type).map(|oid| {
             self.put_data(oid, data);
             oid.off()
