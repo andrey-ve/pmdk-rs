@@ -3,7 +3,7 @@
 // Use is subject to license terms.
 //
 
-#![doc(html_root_url = "https://docs.rs/pmdk/0.0.5")]
+#![doc(html_root_url = "https://docs.rs/pmdk/0.0.6")]
 
 use crossbeam_queue::ArrayQueue;
 use libc::{c_char, c_int, c_void};
