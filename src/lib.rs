@@ -5,15 +5,13 @@
 
 #![doc(html_root_url = "https://docs.rs/pmdk/0.0.5")]
 
+use crossbeam_queue::ArrayQueue;
 use libc::{c_char, c_int, c_void};
 use libc::{mode_t, size_t};
 use std::convert::{From, Into, TryInto};
 use std::ffi::CString;
 use std::option::Option;
-
 use std::path::Path;
-
-use crossbeam_queue::ArrayQueue;
 
 use pmdk_sys::obj::{
     pmemobj_alloc, pmemobj_close, pmemobj_create, pmemobj_direct, pmemobj_free,
@@ -21,7 +19,9 @@ use pmdk_sys::obj::{
 };
 use pmdk_sys::PMEMoid;
 
-pub use crate::error::{Error, Kind as ErrorKind, WrapErr};
+use crate::error::WrapErr;
+
+pub use crate::error::{Error, Kind as ErrorKind};
 
 mod error;
 
