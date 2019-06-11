@@ -199,6 +199,8 @@ impl Drop for ObjPool {
 
 #[cfg(test)]
 mod tests {
+    use crossbeam_queue::ArrayQueue;
+    use std::mem;
     use std::path::PathBuf;
     use std::str::FromStr;
 
@@ -216,6 +218,8 @@ mod tests {
         });
     }
 
+    const DIRECT_PTR_MASK: u64 = !0u64 >> ((mem::size_of::<u64>() * 8 - 4) as u64);
+
     #[test]
     fn create() {
         let obj_pool = {
@@ -229,12 +233,24 @@ mod tests {
         };
         println!("create:: MEM pool create: done!");
 
-        let keys_vals = (0..10)
+        let keys_vals = (0..100)
             .map(|i| {
-                let buf = vec![0xafu8; 0x1000]; // 4k
+                let buf = vec![0xafu8; 0x10]; // 16 byte
                 let key = obj_pool.put(&buf, i as u64);
                 assert!(key.is_ok());
                 let rkey = unsafe { obj_pool.key_to_raw(key.unwrap()) };
+
+                let key: u64 = unsafe { mem::transmute(rkey) };
+
+                if key & DIRECT_PTR_MASK != 0u64 {
+                    println!(
+                        "create:: verification error key 0x{:x} bx{:b} mask 0x{:b} result 0x{:b}",
+                        key,
+                        key,
+                        DIRECT_PTR_MASK,
+                        key & DIRECT_PTR_MASK
+                    );
+                }
                 (rkey, buf)
             })
             .collect::<Vec<_>>();
@@ -244,18 +260,21 @@ mod tests {
         println!("create:: MEM get: done!");
     }
 
+    fn pool_create_with_capacity(
+        file_name: &str,
+        obj_size: usize,
+        capacity: usize,
+    ) -> (ObjPool, ArrayQueue<ObjRawKey>) {
+        let path = PathBuf::from_str(file_name).unwrap();
+        let res = ObjPool::with_capacity::<_, String>(&path, None, obj_size, capacity);
+        assert!(res.is_ok());
+        res.unwrap()
+    }
+
     #[test]
     fn preallocate() {
-        let (obj_pool, aqueue) = {
-            let path = PathBuf::from_str("__pmdk_basic__preallocate_test.obj").unwrap();
-            let obj_size = 0x1000; // 4k
-            let capacity = 0x800; // 2k
-
-            let res = ObjPool::with_capacity::<_, String>(&path, None, obj_size, capacity);
-            assert!(res.is_ok());
-
-            res.unwrap()
-        };
+        let (obj_pool, aqueue) =
+            pool_create_with_capacity("__pmdk_basic__preallocate_test.obj", 0x1000, 0x800);
 
         println!("preallocate:: allocated {} objects", aqueue.len());
 
@@ -289,5 +308,33 @@ mod tests {
 
         verify_objs(&obj_pool, keys_vals);
         println!("preallocate:: MEM get partial: done!");
+    }
+
+    struct AlignedData {
+        f1: u64,
+        f2: u64,
+    }
+
+    #[test]
+    fn alloc_alignment() {
+        let obj_size = mem::size_of::<AlignedData>();
+        let (obj_pool, aqueue) = pool_create_with_capacity(
+            "__pmdk_basic__alignment_test.obj",
+            obj_size,
+            0x90000 / obj_size,
+        );
+
+        println!(
+            "alloc_alignment:: allocated {} objects of {}",
+            aqueue.len(),
+            obj_size
+        );
+
+        while let Ok(rkey) = aqueue.pop() {
+            let key: u64 = unsafe { mem::transmute(rkey) };
+            assert_eq!(key & DIRECT_PTR_MASK, 0u64);
+        }
+
+        println!("alloc_alignment:: check done!");
     }
 }
