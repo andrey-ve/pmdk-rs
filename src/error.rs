@@ -25,6 +25,12 @@ pub enum Kind {
 
     #[fail(display = "PMDK get error message failed")]
     PmdkNoMsgError,
+
+    #[fail(display = "PMDK pool dropped before allocation complete")]
+    PmdkDropBeforeAllocationError,
+
+    #[fail(display = "PMDK no space in queue")]
+    PmdkNoSpaceInQueueError,
 }
 
 impl Fail for Error {
