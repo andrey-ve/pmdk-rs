@@ -85,8 +85,8 @@ pub(crate) trait WrapErr<T, E>: ResultExt<T, E> {
 
 #[allow(clippy::use_self)]
 impl<T, E> WrapErr<T, E> for Result<T, E>
-    where
-        Self: ResultExt<T, E>,
+where
+    Self: ResultExt<T, E>,
 {
     fn wrap_err(self, kind: Kind) -> Result<T, Error> {
         self.context(kind).map_err(Into::into)
