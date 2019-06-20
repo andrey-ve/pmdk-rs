@@ -249,10 +249,6 @@ impl ObjPool {
         Ok((pool, aqueue))
     }
 
-    pub fn key_to_raw(&self, key: u64) -> ObjRawKey {
-        PMEMoid::new(self.uuid_lo, key).into()
-    }
-
     pub fn update_by_rawkey<O>(
         &self,
         rkey: ObjRawKey,
@@ -288,11 +284,6 @@ impl ObjPool {
             buf.len(),
         ));
         rkey
-    }
-
-    // TODO: this is one of many interfaces for known size data retrieval
-    pub unsafe fn get(&self, key: u64, buf: &mut [u8]) -> ObjRawKey {
-        self.get_by_rawkey(self.key_to_raw(key), buf)
     }
 }
 
