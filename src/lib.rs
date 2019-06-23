@@ -128,6 +128,10 @@ impl ObjRawKey {
     fn as_mut_ptr(&mut self) -> *mut c_void {
         self.0
     }
+
+    pub unsafe fn as_slice<'a>(&self, len: usize) -> &'a [u8] {
+        std::slice::from_raw_parts(self.0 as *const u8, len)
+    }
 }
 
 unsafe impl std::marker::Send for ObjRawKey {}
