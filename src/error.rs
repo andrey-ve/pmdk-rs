@@ -20,7 +20,7 @@ pub enum Kind {
     #[fail(display = "Generic Error")]
     GenericError,
 
-    #[fail(display = "PMDK status Error")]
+    #[fail(display = "PMDK status Error: {}", 0)]
     PmdkError(String),
 
     #[fail(display = "PMDK get error message failed")]
