@@ -80,6 +80,16 @@ fn alloc_multi(
         })
         .collect::<Result<Vec<()>, Error>>()
         .map(|_| ())
+        .or_else(|e| {
+            match e.kind() {
+                ErrorKind::PmdkDropBeforeAllocationError => {
+                    // TODO: trace it
+                    println!("{}", e);
+                    Ok(())
+                }
+                _ => Err(e),
+            }
+        })
 }
 
 const OBJ_HEADER_SIZE: usize = 64;
