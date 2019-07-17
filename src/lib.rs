@@ -6,6 +6,7 @@
 #![doc(html_root_url = "https://docs.rs/pmdk/0.0.6")]
 
 use crossbeam_queue::ArrayQueue;
+use futures::{Async, Poll, Stream};
 use libc::{c_char, c_int, c_void};
 use libc::{mode_t, size_t};
 use std::convert::{From, Into, TryInto};
@@ -97,6 +98,30 @@ const OBJ_ALLOC_FACTOR: usize = 3;
 
 fn pool_size(capacity: usize, obj_size: usize) -> usize {
     (capacity * (obj_size + OBJ_HEADER_SIZE)) * OBJ_ALLOC_FACTOR
+}
+
+pub struct ObjAllocator {
+    pool: Arc<ObjPool>,
+    obj_size: usize,
+    data_type: u64,
+    capacity: usize,
+    allocated: usize,
+}
+
+impl Stream for ObjAllocator {
+    type Item = ObjRawKey;
+    type Error = Error;
+
+    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
+        if self.allocated >= self.capacity {
+            Ok(Async::Ready(None))
+        } else {
+            alloc(self.pool.inner, self.obj_size, self.data_type).map(|oid| {
+                self.allocated += 1;
+                Async::Ready(Some(oid.into()))
+            })
+        }
+    }
 }
 
 const DIRECT_PTR_MASK: u64 = !0u64 >> ((mem::size_of::<u64>() * 8 - 4) as u64);
@@ -263,6 +288,28 @@ impl ObjPool {
         Ok((pool, aqueue))
     }
 
+    pub fn with_allocator<P: AsRef<Path>, S: Into<String>>(
+        path: P,
+        layout: Option<S>,
+        obj_size: usize,
+        data_type: u64,
+        capacity: usize,
+    ) -> Result<(Arc<Self>, ObjAllocator), Error> {
+        let poolsize = pool_size(capacity, obj_size);
+        let pool = Arc::new(Self::new(path, layout, poolsize)?);
+        let allocated_pool = Arc::clone(&pool);
+        Ok((
+            allocated_pool,
+            ObjAllocator {
+                pool,
+                obj_size,
+                data_type,
+                capacity,
+                allocated: 0,
+            },
+        ))
+    }
+
     pub fn update_by_rawkey<O>(
         &self,
         rkey: ObjRawKey,
@@ -314,14 +361,18 @@ impl Drop for ObjPool {
 #[cfg(test)]
 mod tests {
     use crossbeam_queue::ArrayQueue;
+    use futures::future::Future;
+    use futures::stream::Stream;
+    use futures_cpupool::CpuPool;
     use std::mem;
     use std::path::PathBuf;
     use std::str::FromStr;
     use std::sync::Arc;
+    use tokio::run;
 
-    use super::{DIRECT_PTR_MASK, ObjPool};
+    use super::{ObjPool, DIRECT_PTR_MASK};
     use crate::error::{Kind as ErrorKind, WrapErr};
-    use crate::{Error, ObjRawKey};
+    use crate::{Error, ObjAllocator, ObjRawKey};
 
     fn verify_objs(
         obj_pool: &ObjPool,
@@ -345,43 +396,37 @@ mod tests {
     }
 
     #[test]
-    fn create() {
+    fn create() -> Result<(), Error> {
         let obj_pool = {
             let path = PathBuf::from_str("__pmdk_basic__create_test.obj").unwrap();
             let size = 0x1000000; // 16 Mb
 
-            let obj_pool = ObjPool::new::<_, String>(&path, None, size);
-            assert!(obj_pool.is_ok());
-
-            obj_pool.unwrap()
-        };
+            ObjPool::new::<_, String>(&path, None, size)
+        }?;
         println!("create:: MEM pool create: done!");
 
         let keys_vals = (0..100)
             .map(|i| {
                 let buf = vec![0xafu8; 0x10]; // 16 byte
-                let key = obj_pool.put(&buf, i as u64);
-                assert!(key.is_ok());
-                let key = key.unwrap();
-
-                let key = u64::from(key);
-
-                if key & DIRECT_PTR_MASK != 0u64 {
-                    println!(
-                        "create:: verification error key 0x{:x} bx{:b} mask 0x{:b} result 0x{:b}",
-                        key,
-                        key,
-                        DIRECT_PTR_MASK,
-                        key & DIRECT_PTR_MASK
-                    );
-                }
-                (key.into(), buf)
+                obj_pool.put(&buf, i as u64)
+                    .map(|key| u64::from(key))
+                    .map(|key| {
+                        if key & DIRECT_PTR_MASK != 0u64 {
+                            println!(
+                                "create:: verification error key 0x{:x} bx{:b} mask 0x{:b} result 0x{:b}",
+                                key,
+                                key,
+                                DIRECT_PTR_MASK,
+                                key & DIRECT_PTR_MASK
+                            );
+                        }
+                        (key.into(), buf)
+                    })
             })
-            .collect::<Vec<_>>();
+            .collect::<Result<Vec<(ObjRawKey, Vec<u8>)>, Error>>()?;
         println!("create:: MEM put: done!");
 
-        verify_objs(&obj_pool, keys_vals);
-        println!("create:: MEM get: done!");
+        verify_objs(&obj_pool, keys_vals).map(|_| ())
     }
 
     fn pool_create_with_capacity(
@@ -409,13 +454,46 @@ mod tests {
         )
     }
 
+    fn pool_create_with_allocator(
+        file_name: &str,
+        obj_size: usize,
+        capacity: usize,
+    ) -> Result<(Arc<ObjPool>, ObjAllocator), Error> {
+        let path = PathBuf::from_str(file_name).unwrap();
+        ObjPool::with_allocator::<_, String>(&path, None, obj_size, 0, capacity)
+    }
+
+    fn wait_for_capacity(
+        aqueue: &ArrayQueue<ObjRawKey>,
+        capacity: usize,
+        interval: u64,
+        name: &str,
+    ) {
+        loop {
+            let cur_capacity = aqueue.len();
+            if cur_capacity < capacity {
+                println!(
+                    "{}: objects allocated/capacity {}/{}  -> sleep({})",
+                    name, cur_capacity, capacity, interval,
+                );
+                std::thread::sleep(std::time::Duration::from_secs(interval));
+            } else {
+                println!(
+                    "{}: objects allocated/capacity {}/{}  -> full capacity reached",
+                    name, cur_capacity, capacity,
+                );
+                break;
+            }
+        }
+    }
+
     fn update_objs(
         obj_pool: Arc<ObjPool>,
         aqueue: Arc<ArrayQueue<ObjRawKey>>,
         nobj: usize,
         name: &str,
     ) -> Result<(), Error> {
-        let keys_vals: Vec<(ObjRawKey, Vec<u8>)> = (0..nobj)
+        let keys_vals = (0..nobj)
             .map(|_| {
                 let buf = vec![0xafu8; 0x1000]; // 4k
                 let key = aqueue.pop().wrap_err(ErrorKind::GenericError)?;
@@ -428,7 +506,7 @@ mod tests {
         let keys_vals = verify_objs(&obj_pool, keys_vals)?;
         println!("{}:: MEM get: done!", name);
 
-        let keys_vals: Vec<(ObjRawKey, Vec<u8>)> = keys_vals
+        let keys_vals = keys_vals
             .into_iter()
             .map(|(key, _)| {
                 let mut buf1 = vec![0xafu8; 0x800]; // 2k
@@ -465,6 +543,7 @@ mod tests {
 
     #[test]
     fn preallocate_differed() -> Result<(), Error> {
+        let name = "preallocate differed";
         let mut capacity = 0x800;
         let (obj_pool, aqueue) = pool_create_with_capacity_differed(
             "__pmdk_basic__preallocate_differed_test.obj",
@@ -475,39 +554,14 @@ mod tests {
 
         println!("preallocate differed:: allocated {} objects", aqueue.len());
 
-        update_objs(
-            Arc::clone(&obj_pool),
-            Arc::clone(&aqueue),
-            10,
-            "preallocate differed",
-        )?;
+        update_objs(Arc::clone(&obj_pool), Arc::clone(&aqueue), 10, name)?;
         capacity -= 10;
 
-        update_objs(
-            Arc::clone(&obj_pool),
-            Arc::clone(&aqueue),
-            100,
-            "preallocate differed",
-        )?;
+        update_objs(Arc::clone(&obj_pool), Arc::clone(&aqueue), 100, name)?;
         capacity -= 100;
 
-        loop {
-            let cur_capacity = aqueue.len();
-            if cur_capacity < capacity {
-                println!(
-                    "preallocate differed:: allocated {} objects (sleep 5)",
-                    cur_capacity
-                );
-                std::thread::sleep(std::time::Duration::from_secs(5));
-            } else {
-                break;
-            }
-        }
+        wait_for_capacity(&aqueue, capacity, 5, name);
 
-        println!(
-            "preallocate differed:: queue fully allocated {} objects",
-            aqueue.len()
-        );
         Ok(())
     }
 
@@ -519,7 +573,7 @@ mod tests {
     #[test]
     fn alloc_alignment() -> Result<(), Error> {
         let obj_size = mem::size_of::<AlignedData>();
-        let (obj_pool, aqueue) = pool_create_with_capacity(
+        let (_obj_pool, aqueue) = pool_create_with_capacity(
             "__pmdk_basic__alignment_test.obj",
             obj_size,
             0x90000 / obj_size,
@@ -538,5 +592,40 @@ mod tests {
 
         println!("alloc_alignment:: check done!");
         Ok(())
+    }
+
+    #[test]
+    fn allocator() -> Result<(), Error> {
+        let name = "allocator";
+        let mut capacity = 0x800;
+        let (obj_pool, allocator) =
+            pool_create_with_allocator("__pmdk_basic_allocator_test.obj", 0x1000, capacity)?;
+
+        let aqueue = Arc::new(ArrayQueue::new(capacity));
+        let aqueue_clone = Arc::clone(&aqueue);
+        let threads = CpuPool::new(10);
+
+        let alloc_task = threads
+            .spawn(allocator.for_each(move |key| {
+                aqueue_clone
+                    .push(key)
+                    .wrap_err(ErrorKind::PmdkNoSpaceInQueueError)
+            }))
+            .map(|_| ())
+            .map_err(|_| ());
+
+        let allocation_context = std::thread::spawn(|| run(alloc_task));
+
+        capacity -= 10;
+        wait_for_capacity(&aqueue, 10, 5, name);
+        update_objs(Arc::clone(&obj_pool), Arc::clone(&aqueue), 10, name)?;
+
+        capacity -= 100;
+        wait_for_capacity(&aqueue, capacity, 5, name);
+        update_objs(Arc::clone(&obj_pool), Arc::clone(&aqueue), 100, name)?;
+
+        allocation_context
+            .join()
+            .map_err(|_| ErrorKind::GenericError.into())
     }
 }
