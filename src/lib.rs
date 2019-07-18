@@ -213,8 +213,10 @@ impl ObjPool {
     pub fn new<P: AsRef<Path>, S: Into<String>>(
         path: P,
         layout: Option<S>,
-        size: usize,
+        obj_size: usize,
+        capacity: usize,
     ) -> Result<Self, Error> {
+        let size = pool_size(capacity, obj_size);
         Self::with_layout(path, layout, size).and_then(|inner| {
             // Can't reach sys_pool->uuid_lo field => allocating object to get it
             // TODO: use root object for this workaround
@@ -232,8 +234,7 @@ impl ObjPool {
         obj_size: usize,
         capacity: usize,
     ) -> Result<(Self, ArrayQueue<ObjRawKey>), Error> {
-        let poolsize = pool_size(capacity, obj_size);
-        let pool = Self::new(path, layout, poolsize)?;
+        let pool = Self::new(path, layout, obj_size, capacity)?;
         let inner = pool.inner;
         let aqueue = ArrayQueue::new(capacity);
 
@@ -261,8 +262,7 @@ impl ObjPool {
         } else {
             initial_capacity
         };
-        let poolsize = pool_size(capacity, obj_size);
-        let pool = Arc::new(Self::new(path, layout, poolsize)?);
+        let pool = Arc::new(Self::new(path, layout, capacity, obj_size)?);
         let aqueue = Arc::new(ArrayQueue::new(capacity));
         alloc_multi(
             Arc::clone(&pool),
@@ -288,6 +288,21 @@ impl ObjPool {
         Ok((pool, aqueue))
     }
 
+    pub fn pair_allocator(
+        pool: &Arc<Self>,
+        obj_size: usize,
+        data_type: u64,
+        capacity: usize,
+    ) -> ObjAllocator {
+        ObjAllocator {
+            pool: Arc::clone(pool),
+            obj_size,
+            data_type,
+            capacity,
+            allocated: 0,
+        }
+    }
+
     pub fn with_allocator<P: AsRef<Path>, S: Into<String>>(
         path: P,
         layout: Option<S>,
@@ -295,19 +310,9 @@ impl ObjPool {
         data_type: u64,
         capacity: usize,
     ) -> Result<(Arc<Self>, ObjAllocator), Error> {
-        let poolsize = pool_size(capacity, obj_size);
-        let pool = Arc::new(Self::new(path, layout, poolsize)?);
-        let allocated_pool = Arc::clone(&pool);
-        Ok((
-            allocated_pool,
-            ObjAllocator {
-                pool,
-                obj_size,
-                data_type,
-                capacity,
-                allocated: 0,
-            },
-        ))
+        let pool = Arc::new(Self::new(path, layout, obj_size, capacity)?);
+        let allocator = Self::pair_allocator(&pool, obj_size, data_type, capacity);
+        Ok((pool, allocator))
     }
 
     pub fn update_by_rawkey<O>(
@@ -399,9 +404,10 @@ mod tests {
     fn create() -> Result<(), Error> {
         let obj_pool = {
             let path = PathBuf::from_str("__pmdk_basic__create_test.obj").unwrap();
+            let obj_size = 0x1000; // 4k
             let size = 0x1000000; // 16 Mb
 
-            ObjPool::new::<_, String>(&path, None, size)
+            ObjPool::new::<_, String>(&path, None, obj_size, size/obj_size)
         }?;
         println!("create:: MEM pool create: done!");
 
