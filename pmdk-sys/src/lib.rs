@@ -16,7 +16,7 @@ pub mod obj;
 pub use base::PMEMoid;
 
 #[allow(dead_code)]
-#[link(name = "pmem")]
+#[link(name="pmem", kind="static")]
 extern "C" {
     // Most commonly used functions:
 

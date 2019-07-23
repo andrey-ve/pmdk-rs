@@ -15,7 +15,7 @@ pub enum PMEMobjpool {}
 pub type pmemobj_constr = unsafe extern "C" fn(pop: *mut PMEMobjpool, ptr: *mut c_void, arg: *mut c_void) -> c_int;
 
 #[allow(dead_code)]
-#[link(name = "pmemobj")]
+#[link(name="pmemobj", kind="static")]
 extern "C" {
     pub fn pmemobj_open(path: *const c_char, layout: *const c_char) -> *mut PMEMobjpool;
     pub fn pmemobj_create(path: *const c_char,
