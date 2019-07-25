@@ -186,13 +186,18 @@ impl ObjPool {
         layout: Option<S>,
         size: usize,
     ) -> Result<*mut SysPMEMobjpool, Error> {
-        let path = path.as_ref().to_string_lossy();
-        // TODO: remove unwrap
+        let path = path.as_ref().to_str().map_or_else(
+            || Err(ErrorKind::PathError.into()),
+            |path| CString::new(path).wrap_err(ErrorKind::PathError),
+        )?;
         let layout = layout.map_or_else(
-            || std::ptr::null::<c_char>(),
-            |layout| CString::new(layout.into()).unwrap().as_ptr() as *const c_char,
-        );
-
+            || Ok(std::ptr::null::<c_char>()),
+            |layout| {
+                CString::new(layout.into())
+                    .map(|layout| layout.as_ptr() as *const c_char)
+                    .wrap_err(ErrorKind::LayoutError)
+            },
+        )?;
         let mode = 0o666;
         let inner = unsafe {
             pmemobj_create(
@@ -407,7 +412,7 @@ mod tests {
             let obj_size = 0x1000; // 4k
             let size = 0x1000000; // 16 Mb
 
-            ObjPool::new::<_, String>(&path, None, obj_size, size/obj_size)
+            ObjPool::new::<_, String>(&path, None, obj_size, size / obj_size)
         }?;
         println!("create:: MEM pool create: done!");
 

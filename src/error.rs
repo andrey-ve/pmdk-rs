@@ -20,6 +20,12 @@ pub enum Kind {
     #[fail(display = "Generic Error")]
     GenericError,
 
+    #[fail(display = "Invalid Path Error")]
+    PathError,
+
+    #[fail(display = "Invalid Layout Error")]
+    LayoutError,
+
     #[fail(display = "PMDK status Error: {}", 0)]
     PmdkError(String),
 
