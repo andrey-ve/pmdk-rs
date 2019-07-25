@@ -16,11 +16,8 @@ use std::option::Option;
 use std::path::Path;
 use std::sync::Arc;
 
-use pmdk_sys::obj::{
-    pmemobj_alloc, pmemobj_close, pmemobj_create, pmemobj_direct, pmemobj_free,
-    pmemobj_memcpy_persist, PMEMobjpool as SysPMEMobjpool,
-};
-use pmdk_sys::PMEMoid;
+use pmdk_sys::obj::{pmemobj_alloc, pmemobj_close, pmemobj_create, pmemobj_direct, pmemobj_free, pmemobj_memcpy_persist, PMEMobjpool as SysPMEMobjpool, pmemobj_oid};
+pub use pmdk_sys::PMEMoid;
 
 use crate::error::WrapErr;
 
@@ -155,6 +152,12 @@ impl From<PMEMoid> for ObjRawKey {
     }
 }
 
+impl From<ObjRawKey> for PMEMoid {
+    fn from(key: ObjRawKey) -> Self {
+        key.as_persistent()
+    }
+}
+
 impl ObjRawKey {
     const fn as_ptr(&self) -> *const c_void {
         self.0 as *const c_void
@@ -166,6 +169,10 @@ impl ObjRawKey {
 
     pub unsafe fn as_slice<'a>(&self, len: usize) -> &'a [u8] {
         std::slice::from_raw_parts(self.0 as *const u8, len)
+    }
+
+    pub fn as_persistent(&self) -> PMEMoid {
+        unsafe { pmemobj_oid(self.as_ptr())}
     }
 }
 

@@ -50,5 +50,7 @@ extern "C" {
     pub fn pmemobj_errormsg() -> *const c_char;
 
     pub fn pmemobj_direct(oid: PMEMoid) -> *mut c_void;
+
+    pub fn pmemobj_oid(addr: *const c_void) -> PMEMoid;
 }
 

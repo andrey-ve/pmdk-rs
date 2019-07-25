@@ -3,11 +3,12 @@
 // Use is subject to license terms.
 //
 
+use serde::{Deserialize, Serialize};
 use std::fmt;
 
 
 #[repr(C)]
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Serialize, Deserialize)]
 pub struct pmemoid
 {
     pool_uuid_lo: u64,
