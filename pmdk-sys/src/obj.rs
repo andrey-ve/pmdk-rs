@@ -31,7 +31,7 @@ extern "C" {
                          oidp: *mut PMEMoid,
                          size: size_t,
                          type_num: u64,
-                         constructor: pmemobj_constr,
+                         constructor: Option<pmemobj_constr>,
                          arg: *mut c_void
     ) -> c_int;
     pub fn pmemobj_free(oidp: *mut PMEMoid);

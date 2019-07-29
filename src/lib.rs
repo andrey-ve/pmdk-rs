@@ -25,16 +25,6 @@ pub use crate::error::{Error, Kind as ErrorKind};
 
 mod error;
 
-// TODO: need this or null func pointer
-#[no_mangle]
-unsafe extern "C" fn obj_constr_none(
-    _pop: *mut SysPMEMobjpool,
-    _ptr: *mut c_void,
-    _arg: *mut c_void,
-) -> c_int {
-    0
-}
-
 fn alloc(pop: *mut SysPMEMobjpool, size: usize, data_type: u64) -> Result<PMEMoid, Error> {
     let mut oid = PMEMoid::default();
     let oidp = &mut oid;
@@ -45,7 +35,7 @@ fn alloc(pop: *mut SysPMEMobjpool, size: usize, data_type: u64) -> Result<PMEMoi
             oidp as *mut PMEMoid,
             size_t::from(size),
             data_type,
-            obj_constr_none,
+            None,
             std::ptr::null_mut::<c_void>(),
         )
     };
