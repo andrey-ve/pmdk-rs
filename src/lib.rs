@@ -5,9 +5,19 @@
 
 #![doc(html_root_url = "https://docs.rs/pmdk/0.0.6")]
 
+#![warn(clippy::use_self)]
+#![warn(deprecated_in_future)]
+#![warn(future_incompatible)]
+#![warn(unreachable_pub)]
+#![warn(missing_debug_implementations)]
+#![warn(rust_2018_compatibility)]
+#![warn(rust_2018_idioms)]
+#![warn(unused)]
+#![deny(warnings)]
+
 use crossbeam_queue::ArrayQueue;
 use futures::{Async, Poll, Stream};
-use libc::{c_char, c_int, c_void};
+use libc::{c_char, c_void};
 use libc::{mode_t, size_t};
 use std::convert::{From, Into, TryInto};
 use std::ffi::CString;
