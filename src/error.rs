@@ -60,7 +60,7 @@ impl Error {
         self.inner.get_context().clone()
     }
 
-    pub fn obj_error() -> Error {
+    pub fn obj_error() -> Self {
         unsafe {
             let msg = pmemobj_errormsg();
             if msg.is_null() {

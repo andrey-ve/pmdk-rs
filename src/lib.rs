@@ -29,11 +29,13 @@ fn alloc(pop: *mut SysPMEMobjpool, size: usize, data_type: u64) -> Result<PMEMoi
     let mut oid = PMEMoid::default();
     let oidp = &mut oid;
 
+    #[allow(clippy::identity_conversion)]
+    let size = size_t::from(size);
     let status = unsafe {
         pmemobj_alloc(
             pop,
             oidp as *mut PMEMoid,
-            size_t::from(size),
+            size,
             data_type,
             None,
             std::ptr::null_mut::<c_void>(),
@@ -57,7 +59,7 @@ fn alloc_multi(
     let mut queue = queue;
     (0..nobjects)
         .map(|_| {
-            if let Some(_) = Arc::get_mut(&mut queue) {
+            if Arc::get_mut(&mut queue).is_some() {
                 Err(ErrorKind::PmdkDropBeforeAllocationError.into())
             } else {
                 let oid = alloc(pool.inner, size, data_type)?;
@@ -87,6 +89,7 @@ fn pool_size(capacity: usize, obj_size: usize) -> usize {
     (capacity * (obj_size + OBJ_HEADER_SIZE)) * OBJ_ALLOC_FACTOR
 }
 
+#[derive(Debug)]
 pub struct ObjAllocator {
     pool: Arc<ObjPool>,
     obj_size: usize,
@@ -111,19 +114,19 @@ impl Stream for ObjAllocator {
     }
 }
 
-const DIRECT_PTR_MASK: u64 = !0u64 >> ((mem::size_of::<u64>() * 8 - 4) as u64);
 
 #[derive(Debug)]
 pub struct ObjRawKey(*mut c_void);
 
 impl From<*mut c_void> for ObjRawKey {
     fn from(p: *mut c_void) -> Self {
-        ObjRawKey(p)
+        Self(p)
     }
 }
 
 impl From<u64> for ObjRawKey {
     fn from(o: u64) -> Self {
+        #[allow(clippy::useless_transmute)]
         let p = unsafe { mem::transmute::<_, *mut c_void>(o) };
         p.into()
     }
@@ -132,13 +135,13 @@ impl From<u64> for ObjRawKey {
 impl From<ObjRawKey> for u64 {
     fn from(key: ObjRawKey) -> Self {
         let p = key.0;
-        unsafe { mem::transmute::<_, u64>(p) }
+        unsafe { mem::transmute::<_, Self>(p) }
     }
 }
 
 impl From<PMEMoid> for ObjRawKey {
     fn from(oid: PMEMoid) -> Self {
-        ObjRawKey(unsafe { pmemobj_direct(oid) })
+        Self(unsafe { pmemobj_direct(oid) })
     }
 }
 
@@ -169,6 +172,7 @@ impl ObjRawKey {
 unsafe impl std::marker::Send for ObjRawKey {}
 unsafe impl std::marker::Sync for ObjRawKey {}
 
+#[derive(Debug)]
 pub struct ObjPool {
     inner: *mut SysPMEMobjpool,
     uuid_lo: u64,
@@ -195,12 +199,14 @@ impl ObjPool {
                     .wrap_err(ErrorKind::LayoutError)
             },
         )?;
+        #[allow(clippy::identity_conversion)]
+        let size = size_t::from(size);
         let mode = 0o666;
         let inner = unsafe {
             pmemobj_create(
                 path.as_ptr() as *const c_char,
                 layout,
-                size_t::from(size),
+                size,
                 mode as mode_t,
             )
         };
@@ -332,6 +338,7 @@ impl ObjPool {
             .try_into()
             .wrap_err(ErrorKind::GenericError)?;
         let src = data.as_ptr() as *const c_void;
+        #[allow(clippy::identity_conversion)]
         let size = size_t::from(data.len());
         let mut rkey = rkey;
         unsafe {
@@ -377,9 +384,11 @@ mod tests {
     use std::sync::Arc;
     use tokio::run;
 
-    use super::{ObjPool, DIRECT_PTR_MASK};
+    use super::ObjPool;
     use crate::error::{Kind as ErrorKind, WrapErr};
     use crate::{Error, ObjAllocator, ObjRawKey};
+
+    const DIRECT_PTR_MASK: u64 = !0u64 >> ((mem::size_of::<u64>() * 8 - 4) as u64);
 
     fn verify_objs(
         obj_pool: &ObjPool,
@@ -407,7 +416,7 @@ mod tests {
         let obj_pool = {
             let path = PathBuf::from_str("__pmdk_basic__create_test.obj").unwrap();
             let obj_size = 0x1000; // 4k
-            let size = 0x1000000; // 16 Mb
+            let size = 0x100_0000; // 16 Mb
 
             ObjPool::new::<_, String>(&path, None, obj_size, size / obj_size)
         }?;
@@ -417,7 +426,7 @@ mod tests {
             .map(|i| {
                 let buf = vec![0xafu8; 0x10]; // 16 byte
                 obj_pool.put(&buf, i as u64)
-                    .map(|key| u64::from(key))
+                    .map(u64::from)
                     .map(|key| {
                         if key & DIRECT_PTR_MASK != 0u64 {
                             println!(

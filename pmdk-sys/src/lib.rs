@@ -15,7 +15,6 @@ pub mod obj;
 
 pub use base::PMEMoid;
 
-#[allow(dead_code)]
 #[link(name="pmem", kind="static")]
 extern "C" {
     // Most commonly used functions:
@@ -53,13 +52,4 @@ extern "C" {
     // Error handling:
 
     pub fn pmem_errormsg() -> *const c_char;
-}
-
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {
-        assert_eq!(2 + 2, 4);
-    }
 }
