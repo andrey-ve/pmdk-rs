@@ -3,7 +3,7 @@
 // Use is subject to license terms.
 //
 
-#![doc(html_root_url = "https://docs.rs/pmdk-sys/0.0.6")]
+#![doc(html_root_url = "https://docs.rs/pmdk-sys/0.1.0")]
 
 use libc::{size_t, mode_t};
 use libc::{c_void, c_char, c_int, c_uint};
