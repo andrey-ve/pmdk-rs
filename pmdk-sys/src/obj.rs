@@ -51,5 +51,7 @@ extern "C" {
     pub fn pmemobj_direct(oid: PMEMoid) -> *mut c_void;
 
     pub fn pmemobj_oid(addr: *const c_void) -> PMEMoid;
+
+    pub fn pmemobj_type_num(oid: PMEMoid) -> u64;
 }
 

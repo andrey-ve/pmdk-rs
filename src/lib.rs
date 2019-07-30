@@ -4,7 +4,6 @@
 //
 
 #![doc(html_root_url = "https://docs.rs/pmdk/0.0.6")]
-
 #![warn(clippy::use_self)]
 #![warn(deprecated_in_future)]
 #![warn(future_incompatible)]
@@ -26,7 +25,10 @@ use std::option::Option;
 use std::path::Path;
 use std::sync::Arc;
 
-use pmdk_sys::obj::{pmemobj_alloc, pmemobj_close, pmemobj_create, pmemobj_direct, pmemobj_free, pmemobj_memcpy_persist, PMEMobjpool as SysPMEMobjpool, pmemobj_oid};
+use pmdk_sys::obj::{
+    pmemobj_alloc, pmemobj_close, pmemobj_create, pmemobj_direct, pmemobj_free,
+    pmemobj_memcpy_persist, pmemobj_oid, pmemobj_type_num, PMEMobjpool as SysPMEMobjpool,
+};
 pub use pmdk_sys::PMEMoid;
 
 use crate::error::WrapErr;
@@ -124,7 +126,6 @@ impl Stream for ObjAllocator {
     }
 }
 
-
 #[derive(Debug)]
 pub struct ObjRawKey(*mut c_void);
 
@@ -175,7 +176,11 @@ impl ObjRawKey {
     }
 
     pub fn as_persistent(&self) -> PMEMoid {
-        unsafe { pmemobj_oid(self.as_ptr())}
+        unsafe { pmemobj_oid(self.as_ptr()) }
+    }
+
+    pub fn get_type(&self) -> u64 {
+        unsafe { pmemobj_type_num(self.as_persistent()) }
     }
 }
 
@@ -212,14 +217,8 @@ impl ObjPool {
         #[allow(clippy::identity_conversion)]
         let size = size_t::from(size);
         let mode = 0o666;
-        let inner = unsafe {
-            pmemobj_create(
-                path.as_ptr() as *const c_char,
-                layout,
-                size,
-                mode as mode_t,
-            )
-        };
+        let inner =
+            unsafe { pmemobj_create(path.as_ptr() as *const c_char, layout, size, mode as mode_t) };
 
         if inner.is_null() {
             Err(Error::obj_error())
@@ -402,25 +401,27 @@ mod tests {
 
     const DIRECT_PTR_MASK: u64 = !0u64 >> ((mem::size_of::<u64>() * 8 - 4) as u64);
 
+    const TEST_TYPE_NUM: u64 = 0xf;
+
     fn verify_objs(
         obj_pool: &ObjPool,
-        keys_vals: Vec<(ObjRawKey, Vec<u8>)>,
-    ) -> Result<Vec<(ObjRawKey, Vec<u8>)>, Error> {
+        keys_vals: Vec<(ObjRawKey, Vec<u8>, u64)>,
+    ) -> Result<Vec<(ObjRawKey, Vec<u8>, u64)>, Error> {
         keys_vals
             .into_iter()
-            .map(|(rkey, val)| {
+            .map(|(rkey, val, val_type_num)| {
                 let mut buf = Vec::with_capacity(val.len());
                 let key = unsafe {
                     buf.set_len(val.len());
                     obj_pool.get_by_rawkey(rkey, &mut buf)
                 };
-                if buf == val {
-                    Ok((key, val))
+                if buf == val && key.get_type() == val_type_num {
+                    Ok((key, val, val_type_num))
                 } else {
                     Err(ErrorKind::GenericError.into())
                 }
             })
-            .collect::<Result<Vec<(ObjRawKey, Vec<u8>)>, Error>>()
+            .collect::<Result<Vec<(ObjRawKey, Vec<u8>, u64)>, Error>>()
     }
 
     #[test]
@@ -449,10 +450,10 @@ mod tests {
                                 key & DIRECT_PTR_MASK
                             );
                         }
-                        (key.into(), buf)
+                        (key.into(), buf, i)
                     })
             })
-            .collect::<Result<Vec<(ObjRawKey, Vec<u8>)>, Error>>()?;
+            .collect::<Result<Vec<(ObjRawKey, Vec<u8>, u64)>, Error>>()?;
         println!("create:: MEM put: done!");
 
         verify_objs(&obj_pool, keys_vals).map(|_| ())
@@ -464,7 +465,7 @@ mod tests {
         capacity: usize,
     ) -> Result<(ObjPool, ArrayQueue<ObjRawKey>), Error> {
         let path = PathBuf::from_str(file_name).unwrap();
-        ObjPool::with_capacity::<_, String>(&path, None, obj_size, 1, capacity)
+        ObjPool::with_capacity::<_, String>(&path, None, obj_size, TEST_TYPE_NUM, capacity)
     }
 
     fn pool_create_with_capacity_differed(
@@ -478,7 +479,7 @@ mod tests {
             &path,
             None,
             obj_size,
-            1,
+            TEST_TYPE_NUM,
             capacity,
             initial_capacity,
         )
@@ -490,7 +491,7 @@ mod tests {
         capacity: usize,
     ) -> Result<(Arc<ObjPool>, ObjAllocator), Error> {
         let path = PathBuf::from_str(file_name).unwrap();
-        ObjPool::with_allocator::<_, String>(&path, None, obj_size, 0, capacity)
+        ObjPool::with_allocator::<_, String>(&path, None, obj_size, TEST_TYPE_NUM, capacity)
     }
 
     fn wait_for_capacity(
@@ -528,9 +529,9 @@ mod tests {
                 let buf = vec![0xafu8; 0x1000]; // 4k
                 let key = aqueue.pop().wrap_err(ErrorKind::GenericError)?;
                 let key = obj_pool.update_by_rawkey(key, &buf, None)?;
-                Ok((key, buf))
+                Ok((key, buf, TEST_TYPE_NUM))
             })
-            .collect::<Result<Vec<(ObjRawKey, Vec<u8>)>, Error>>()?;
+            .collect::<Result<Vec<(ObjRawKey, Vec<u8>, u64)>, Error>>()?;
         println!("{}:: MEM put: done!", name);
 
         let keys_vals = verify_objs(&obj_pool, keys_vals)?;
@@ -538,14 +539,14 @@ mod tests {
 
         let keys_vals = keys_vals
             .into_iter()
-            .map(|(key, _)| {
+            .map(|(key, _, type_num)| {
                 let mut buf1 = vec![0xafu8; 0x800]; // 2k
                 let mut buf2 = vec![0xbcu8; 0x800]; // 2k
                 let key = obj_pool.update_by_rawkey(key, &buf2, buf1.len())?;
                 buf1.append(&mut buf2);
-                Ok((key, buf1))
+                Ok((key, buf1, type_num))
             })
-            .collect::<Result<Vec<(ObjRawKey, Vec<u8>)>, Error>>()?;
+            .collect::<Result<Vec<(ObjRawKey, Vec<u8>, u64)>, Error>>()?;
         println!("{}:: MEM put partial: done!", name);
 
         verify_objs(&obj_pool, keys_vals)?;
