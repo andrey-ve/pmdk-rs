@@ -250,6 +250,7 @@ impl ObjPool {
         path: P,
         layout: Option<S>,
         obj_size: usize,
+        data_type: u64,
         capacity: usize,
     ) -> Result<(Self, ArrayQueue<ObjRawKey>), Error> {
         let pool = Self::new(path, layout, obj_size, capacity)?;
@@ -259,7 +260,7 @@ impl ObjPool {
         /* pre allocate as much objects as possible up to capacity */
         let _ = (0..capacity)
             .take_while(|_| {
-                alloc(inner, obj_size, 1)
+                alloc(inner, obj_size, data_type)
                     .map(|oid| aqueue.push(oid.into()))
                     .is_ok()
             })
@@ -271,6 +272,7 @@ impl ObjPool {
         path: P,
         layout: Option<S>,
         obj_size: usize,
+        data_type: u64,
         capacity: usize,
         initial_capacity: usize,
     ) -> Result<(Arc<Self>, Arc<ArrayQueue<ObjRawKey>>), Error> {
@@ -286,7 +288,7 @@ impl ObjPool {
             Arc::clone(&pool),
             Arc::clone(&aqueue),
             obj_size,
-            1,
+            data_type,
             initial_capacity,
         )?;
         if capacity > initial_capacity {
@@ -297,7 +299,7 @@ impl ObjPool {
                     alloc_pool,
                     alloc_queue,
                     obj_size,
-                    1,
+                    data_type,
                     capacity - initial_capacity,
                 )
                 .expect("PMEM object pool allocation thread");
@@ -462,7 +464,7 @@ mod tests {
         capacity: usize,
     ) -> Result<(ObjPool, ArrayQueue<ObjRawKey>), Error> {
         let path = PathBuf::from_str(file_name).unwrap();
-        ObjPool::with_capacity::<_, String>(&path, None, obj_size, capacity)
+        ObjPool::with_capacity::<_, String>(&path, None, obj_size, 1, capacity)
     }
 
     fn pool_create_with_capacity_differed(
@@ -476,6 +478,7 @@ mod tests {
             &path,
             None,
             obj_size,
+            1,
             capacity,
             initial_capacity,
         )
