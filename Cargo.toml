@@ -20,6 +20,7 @@ exclude = [
 maintenance = { status = "experimental" }
 
 [workspace]
+members = ["pmdk-sys"]
 
 [dependencies]
 crossbeam-queue = "0.1.2"
