@@ -6,30 +6,31 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
-
 #[repr(C)]
 #[derive(Copy, Clone, Serialize, Deserialize)]
-pub struct pmemoid
-{
+pub struct pmemoid {
     pool_uuid_lo: u64,
     off: u64,
 }
 
-impl Default for pmemoid
-{
+impl Default for pmemoid {
     #[inline(always)]
-    fn default() -> Self
-    {
-        Self { pool_uuid_lo: 0, off: 0}
+    fn default() -> Self {
+        Self {
+            pool_uuid_lo: 0,
+            off: 0,
+        }
     }
 }
 
-impl fmt::Debug for pmemoid
-{
+impl fmt::Debug for pmemoid {
     #[inline(always)]
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result
-    {
-        write!(f, "pmemoid pool: {}, off: {:x}", self.pool_uuid_lo, self.off)
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "pmemoid pool: {}, off: {:x}",
+            self.pool_uuid_lo, self.off
+        )
     }
 }
 
@@ -48,4 +49,3 @@ impl pmemoid {
 }
 
 pub type PMEMoid = pmemoid;
-
