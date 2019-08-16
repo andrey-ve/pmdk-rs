@@ -15,7 +15,6 @@
 #![deny(warnings)]
 
 use crossbeam_queue::ArrayQueue;
-use futures::{Async, Poll, Stream};
 use libc::{c_char, c_void};
 use libc::{mode_t, size_t};
 use std::convert::{From, Into, TryInto};
@@ -110,19 +109,20 @@ pub struct ObjAllocator {
     allocated: usize,
 }
 
-impl Stream for ObjAllocator {
-    type Item = ObjRawKey;
-    type Error = Error;
-
-    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
+impl ObjAllocator {
+    pub fn allocate(&mut self) -> Result<Option<ObjRawKey>, Error> {
         if self.allocated >= self.capacity {
-            Ok(Async::Ready(None))
+            Ok(None)
         } else {
             alloc(self.pool.inner, self.obj_size, self.data_type).map(|oid| {
                 self.allocated += 1;
-                Async::Ready(Some(oid.into()))
+                Some(oid.into())
             })
         }
+    }
+
+    pub fn capacity(&self) -> usize {
+        self.capacity
     }
 }
 
@@ -387,7 +387,6 @@ impl Drop for ObjPool {
 mod tests {
     use crossbeam_queue::ArrayQueue;
     use futures::future::Future;
-    use futures::stream::Stream;
     use futures_cpupool::CpuPool;
     use std::mem;
     use std::path::PathBuf;
@@ -629,7 +628,7 @@ mod tests {
     fn allocator() -> Result<(), Error> {
         let name = "allocator";
         let mut capacity = 0x800;
-        let (obj_pool, allocator) =
+        let (obj_pool, mut allocator) =
             pool_create_with_allocator("__pmdk_basic_allocator_test.obj", 0x1000, capacity)?;
 
         let aqueue = Arc::new(ArrayQueue::new(capacity));
@@ -637,11 +636,21 @@ mod tests {
         let threads = CpuPool::new(10);
 
         let alloc_task = threads
-            .spawn(allocator.for_each(move |key| {
-                aqueue_clone
-                    .push(key)
-                    .wrap_err(ErrorKind::PmdkNoSpaceInQueueError)
-            }))
+            .spawn_fn(|| {
+                let capacity = allocator.capacity();
+                (0..capacity)
+                    .map(move |_| {
+                        allocator.allocate().and_then(|key| {
+                            key.map(|key| {
+                                aqueue_clone
+                                    .push(key)
+                                    .wrap_err(ErrorKind::PmdkNoSpaceInQueueError)
+                            })
+                            .unwrap_or_else(|| Err(ErrorKind::GenericError.into()))
+                        })
+                    })
+                    .collect::<Result<Vec<_>, Error>>()
+            })
             .map(|_| ())
             .map_err(|_| ());
 
@@ -651,7 +660,6 @@ mod tests {
         wait_for_capacity(&aqueue, 10, 5, name);
         update_objs(Arc::clone(&obj_pool), Arc::clone(&aqueue), 10, name)?;
 
-        capacity -= 100;
         wait_for_capacity(&aqueue, capacity, 5, name);
         update_objs(Arc::clone(&obj_pool), Arc::clone(&aqueue), 100, name)?;
 
