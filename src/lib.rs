@@ -19,7 +19,6 @@ use libc::{c_char, c_void};
 use libc::{mode_t, size_t};
 use std::convert::{From, Into, TryInto};
 use std::ffi::CString;
-use std::mem;
 use std::option::Option;
 use std::path::Path;
 use std::sync::Arc;
@@ -137,16 +136,13 @@ impl From<*mut c_void> for ObjRawKey {
 
 impl From<u64> for ObjRawKey {
     fn from(o: u64) -> Self {
-        #[allow(clippy::useless_transmute)]
-        let p = unsafe { mem::transmute::<_, *mut c_void>(o) };
-        p.into()
+        Self(o as *mut c_void)
     }
 }
 
 impl From<ObjRawKey> for u64 {
     fn from(key: ObjRawKey) -> Self {
-        let p = key.0;
-        unsafe { mem::transmute::<_, Self>(p) }
+        key.0 as Self
     }
 }
 
