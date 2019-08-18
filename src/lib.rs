@@ -14,14 +14,14 @@
 #![warn(unused)]
 #![deny(warnings)]
 
+use std::convert::TryInto;
+use std::ffi::CString;
+use std::path::Path;
+use std::sync::Arc;
+
 use crossbeam_queue::ArrayQueue;
 use libc::{c_char, c_void};
 use libc::{mode_t, size_t};
-use std::convert::{From, Into, TryInto};
-use std::ffi::CString;
-use std::option::Option;
-use std::path::Path;
-use std::sync::Arc;
 
 use pmdk_sys::obj::{
     pmemobj_alloc, pmemobj_close, pmemobj_create, pmemobj_direct, pmemobj_free,
