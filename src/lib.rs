@@ -212,9 +212,8 @@ impl ObjPool {
         )?;
         #[allow(clippy::identity_conversion)]
         let size = size_t::from(size);
-        let mode = 0o666;
-        let inner =
-            unsafe { pmemobj_create(path.as_ptr() as *const c_char, layout, size, mode as mode_t) };
+        let mode = 0o666 as mode_t;
+        let inner = unsafe { pmemobj_create(path.as_ptr() as *const c_char, layout, size, mode) };
 
         if inner.is_null() {
             Err(Error::obj_error())
