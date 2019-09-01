@@ -3,12 +3,13 @@
 // Use is subject to license terms.
 //
 
+use std::ffi::CStr;
+use std::fmt;
+use std::io;
+
 use failure::{Backtrace, Context, Fail, ResultExt};
 
 use pmdk_sys::obj::pmemobj_errormsg;
-use std::convert::Into;
-use std::ffi::CStr;
-use std::fmt;
 
 #[derive(Debug)]
 pub struct Error {
@@ -74,6 +75,12 @@ impl Error {
                     .unwrap_or_else(|e| e)
             }
         }
+    }
+}
+
+impl From<io::Error> for Error {
+    fn from(error: io::Error) -> Self {
+        Self::from(error.context(Kind::GenericError))
     }
 }
 
