@@ -240,6 +240,33 @@ impl ObjPool {
         })
     }
 
+    pub fn set_capacity(
+        self,
+        obj_size: usize,
+        data_type: u64,
+        capacity: usize,
+    ) -> Result<(Self, ArrayQueue<ObjRawKey>), Error> {
+        let pool = Arc::new(self);
+        let aqueue = Arc::new(ArrayQueue::new(capacity));
+
+        alloc_multi(
+            Arc::clone(&pool),
+            Arc::clone(&aqueue),
+            obj_size,
+            data_type,
+            capacity,
+        )
+        .and_then(move |_| {
+            Arc::try_unwrap(pool)
+                .map_err(|_| ErrorKind::GenericError.into())
+                .and_then(|pool| {
+                    Arc::try_unwrap(aqueue)
+                        .map(|aqueue| (pool, aqueue))
+                        .map_err(|_| ErrorKind::GenericError.into())
+                })
+        })
+    }
+
     pub fn with_capacity<P: AsRef<Path>, S: Into<String>>(
         path: P,
         layout: Option<S>,
@@ -248,23 +275,11 @@ impl ObjPool {
         capacity: usize,
     ) -> Result<(Self, ArrayQueue<ObjRawKey>), Error> {
         let pool = Self::new(path, layout, obj_size, capacity)?;
-        let inner = pool.inner;
-        let aqueue = ArrayQueue::new(capacity);
-
-        /* pre allocate as much objects as possible up to capacity */
-        let _ = (0..capacity)
-            .take_while(|_| {
-                alloc(inner, obj_size, data_type)
-                    .map(|oid| aqueue.push(oid.into()))
-                    .is_ok()
-            })
-            .collect::<Vec<_>>();
-        Ok((pool, aqueue))
+        pool.set_capacity(obj_size, data_type, capacity)
     }
 
-    pub fn with_initial_capacity<P: AsRef<Path>, S: Into<String>>(
-        path: P,
-        layout: Option<S>,
+    pub fn set_initial_capacity(
+        self,
         obj_size: usize,
         data_type: u64,
         capacity: usize,
@@ -276,7 +291,7 @@ impl ObjPool {
         } else {
             initial_capacity
         };
-        let pool = Arc::new(Self::new(path, layout, capacity, obj_size)?);
+        let pool = Arc::new(self);
         let aqueue = Arc::new(ArrayQueue::new(capacity));
         alloc_multi(
             Arc::clone(&pool),
@@ -300,6 +315,18 @@ impl ObjPool {
             });
         }
         Ok((pool, aqueue))
+    }
+
+    pub fn with_initial_capacity<P: AsRef<Path>, S: Into<String>>(
+        path: P,
+        layout: Option<S>,
+        obj_size: usize,
+        data_type: u64,
+        capacity: usize,
+        initial_capacity: usize,
+    ) -> Result<(Arc<Self>, Arc<ArrayQueue<ObjRawKey>>), Error> {
+        let pool = Self::new(path, layout, capacity, obj_size)?;
+        pool.set_initial_capacity(obj_size, data_type, capacity, initial_capacity)
     }
 
     pub fn pair_allocator(
