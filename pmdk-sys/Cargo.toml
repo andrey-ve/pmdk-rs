@@ -1,7 +1,7 @@
 [package]
 name = "pmdk-sys"
 description = "FFI bindings to pmdk"
-version = "0.2.0"
+version = "0.3.0"
 authors = ["RepliXio Developers <open.source@replixio.com>"]
 license = "Apache-2.0 OR MIT"
 keywords = ["pmdk", "pmem", "pmemio", "libpmem", "libpmemobj"]
