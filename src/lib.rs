@@ -412,6 +412,7 @@ mod tests {
     use std::mem;
     use std::sync::Arc;
 
+    use core::ops::Deref;
     use crossbeam_queue::ArrayQueue;
     use futures::future::Future;
     use futures_cpupool::CpuPool;
@@ -419,10 +420,80 @@ mod tests {
 
     use crate::error::{Kind as ErrorKind, WrapErr};
     use crate::{Error, ObjAllocator, ObjRawKey};
+    use std::path::PathBuf;
 
     const DIRECT_PTR_MASK: u64 = !0u64 >> ((mem::size_of::<u64>() * 8 - 4) as u64);
 
     const TEST_TYPE_NUM: u64 = 0xf;
+
+    struct TmpPool {
+        inner: Arc<ObjPool>,
+        #[allow(dead_code)]
+        dir: tempfile::TempDir,
+    }
+
+    impl Deref for TmpPool {
+        type Target = Arc<ObjPool>;
+
+        #[inline]
+        fn deref(&self) -> &Arc<ObjPool> {
+            &self.inner
+        }
+    }
+
+    impl TmpPool {
+        fn prepare(name: &str) -> Result<(tempfile::TempDir, PathBuf), Error> {
+            let dir = tempfile::tempdir().map_err(|_| ErrorKind::GenericError)?;
+            let path = dir.path().join(name);
+            Ok((dir, path))
+        }
+
+        fn new(name: &str, obj_size: usize, capacity: usize) -> Result<Self, Error> {
+            let (dir, path) = Self::prepare(name)?;
+            ObjPool::new::<_, String>(path, None, obj_size, capacity)
+                .map(Arc::new)
+                .map(|inner| Self { inner, dir })
+        }
+
+        fn new_with_capacity(
+            name: &str,
+            obj_size: usize,
+            capacity: usize,
+        ) -> Result<(Self, ArrayQueue<ObjRawKey>), Error> {
+            let (dir, path) = Self::prepare(name)?;
+            ObjPool::with_capacity::<_, String>(path, None, obj_size, TEST_TYPE_NUM, capacity)
+                .map(|(pool, aqueue)| (Arc::new(pool), aqueue))
+                .map(|(inner, aqueue)| (Self { inner, dir }, aqueue))
+        }
+
+        fn new_with_capacity_differed(
+            name: &str,
+            obj_size: usize,
+            capacity: usize,
+            initial_capacity: usize,
+        ) -> Result<(Self, Arc<ArrayQueue<ObjRawKey>>), Error> {
+            let (dir, path) = Self::prepare(name)?;
+            ObjPool::with_initial_capacity::<_, String>(
+                path,
+                None,
+                obj_size,
+                TEST_TYPE_NUM,
+                capacity,
+                initial_capacity,
+            )
+            .map(|(inner, aqueue)| (Self { inner, dir }, aqueue))
+        }
+
+        fn new_with_allocator(
+            name: &str,
+            obj_size: usize,
+            capacity: usize,
+        ) -> Result<(Self, ObjAllocator), Error> {
+            let (dir, path) = Self::prepare(name)?;
+            ObjPool::with_allocator::<_, String>(path, None, obj_size, TEST_TYPE_NUM, capacity)
+                .map(|(inner, allocator)| (Self { inner, dir }, allocator))
+        }
+    }
 
     fn verify_objs(
         obj_pool: &ObjPool,
@@ -447,11 +518,9 @@ mod tests {
 
     #[test]
     fn create() -> Result<(), Error> {
-        let folder = tempfile::tempdir()?;
-        let path = folder.path().join("__pmdk_basic__create_test.obj");
         let obj_size = 0x1000; // 4k
         let size = 0x100_0000; // 16 Mb
-        let obj_pool = ObjPool::new::<_, String>(path, None, obj_size, size / obj_size)?;
+        let obj_pool = TmpPool::new("__pmdk_basic__create_test.obj", obj_size, size / obj_size)?;
         println!("create:: MEM pool create: done!");
 
         let keys_vals = (0..100)
@@ -476,38 +545,6 @@ mod tests {
         println!("create:: MEM put: done!");
 
         verify_objs(&obj_pool, keys_vals).map(|_| ())
-    }
-
-    fn pool_create_with_capacity(
-        path: &Path,
-        obj_size: usize,
-        capacity: usize,
-    ) -> Result<(ObjPool, ArrayQueue<ObjRawKey>), Error> {
-        ObjPool::with_capacity::<_, String>(path, None, obj_size, TEST_TYPE_NUM, capacity)
-    }
-
-    fn pool_create_with_capacity_differed(
-        path: &Path,
-        obj_size: usize,
-        capacity: usize,
-        initial_capacity: usize,
-    ) -> Result<(Arc<ObjPool>, Arc<ArrayQueue<ObjRawKey>>), Error> {
-        ObjPool::with_initial_capacity::<_, String>(
-            path,
-            None,
-            obj_size,
-            TEST_TYPE_NUM,
-            capacity,
-            initial_capacity,
-        )
-    }
-
-    fn pool_create_with_allocator(
-        path: &Path,
-        obj_size: usize,
-        capacity: usize,
-    ) -> Result<(Arc<ObjPool>, ObjAllocator), Error> {
-        ObjPool::with_allocator::<_, String>(path, None, obj_size, TEST_TYPE_NUM, capacity)
     }
 
     fn wait_for_capacity(
@@ -572,13 +609,11 @@ mod tests {
 
     #[test]
     fn preallocate() -> Result<(), Error> {
-        let folder = tempfile::tempdir()?;
-        let path = folder.path().join("__pmdk_basic__preallocate_test.obj");
-        let (obj_pool, aqueue) = pool_create_with_capacity(&path, 0x1000, 0x800)?;
+        let (obj_pool, aqueue) =
+            TmpPool::new_with_capacity("__pmdk_basic__preallocate_test.obj", 0x1000, 0x800)?;
 
         println!("preallocate:: allocated {} objects", aqueue.len());
 
-        let obj_pool = Arc::new(obj_pool);
         let aqueue = Arc::new(aqueue);
 
         update_objs(
@@ -591,14 +626,14 @@ mod tests {
 
     #[test]
     fn preallocate_differed() -> Result<(), Error> {
-        let folder = tempfile::tempdir()?;
-        let path = folder
-            .path()
-            .join("__pmdk_basic__preallocate_differed_test.obj");
         let name = "preallocate differed";
         let mut capacity = 0x800;
-        let (obj_pool, aqueue) =
-            pool_create_with_capacity_differed(&path, 0x1000, capacity, 0x100)?;
+        let (obj_pool, aqueue) = TmpPool::new_with_capacity_differed(
+            "__pmdk_basic__preallocate_differed_test.obj",
+            0x1000,
+            capacity,
+            0x100,
+        )?;
 
         println!("preallocate differed:: allocated {} objects", aqueue.len());
 
@@ -620,10 +655,12 @@ mod tests {
 
     #[test]
     fn alloc_alignment() -> Result<(), Error> {
-        let folder = tempfile::tempdir()?;
-        let path = folder.path().join("__pmdk_basic__alignment_test.obj");
         let obj_size = mem::size_of::<AlignedData>();
-        let (_obj_pool, aqueue) = pool_create_with_capacity(&path, obj_size, 0x90000 / obj_size)?;
+        let (_obj_pool, aqueue) = TmpPool::new_with_capacity(
+            "__pmdk_basic__alignment_test.obj",
+            obj_size,
+            0x90000 / obj_size,
+        )?;
 
         println!(
             "alloc_alignment:: allocated {} objects of {}",
@@ -642,12 +679,11 @@ mod tests {
 
     #[test]
     fn allocator() -> Result<(), Error> {
-        let folder = tempfile::tempdir()?;
-        let path = folder.path().join("__pmdk_basic_allocator_test.obj");
         let name = "allocator";
         let obj_size = 0x1000;
         let mut capacity = 0x800;
-        let (obj_pool, mut allocator) = pool_create_with_allocator(&path, obj_size, capacity)?;
+        let (obj_pool, mut allocator) =
+            TmpPool::new_with_allocator("__pmdk_basic_allocator_test.obj", obj_size, capacity)?;
 
         let aqueue = Arc::new(ArrayQueue::new(capacity));
         let aqueue_clone = Arc::clone(&aqueue);
