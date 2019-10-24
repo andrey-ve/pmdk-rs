@@ -15,7 +15,7 @@
 #![deny(warnings)]
 
 use std::convert::TryInto;
-use std::ffi::CString;
+use std::ffi::{CStr, CString};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -32,6 +32,7 @@ pub use pmdk_sys::PMEMoid;
 use crate::error::WrapErr;
 
 pub use crate::error::{Error, Kind as ErrorKind};
+use pmdk_sys::pmempool_rm;
 
 mod error;
 
@@ -187,21 +188,19 @@ unsafe impl std::marker::Sync for ObjRawKey {}
 pub struct ObjPool {
     inner: *mut SysPMEMobjpool,
     uuid_lo: u64,
+    inner_path: CString,
+    rm_on_drop: bool,
 }
 
 unsafe impl std::marker::Send for ObjPool {}
 unsafe impl std::marker::Sync for ObjPool {}
 
 impl ObjPool {
-    fn with_layout<P: AsRef<Path>, S: Into<String>>(
-        path: P,
+    fn with_layout<S: Into<String>>(
+        path: &CStr,
         layout: Option<S>,
         size: usize,
     ) -> Result<*mut SysPMEMobjpool, Error> {
-        let path = path.as_ref().to_str().map_or_else(
-            || Err(ErrorKind::PathError.into()),
-            |path| CString::new(path).wrap_err(ErrorKind::PathError),
-        )?;
         let layout = layout.map_or_else(
             || Ok(std::ptr::null::<c_char>()),
             |layout| {
@@ -228,14 +227,24 @@ impl ObjPool {
         obj_size: usize,
         capacity: usize,
     ) -> Result<Self, Error> {
+        let path = path.as_ref().to_str().map_or_else(
+            || Err(ErrorKind::PathError.into()),
+            |path| CString::new(path).wrap_err(ErrorKind::PathError),
+        )?;
         let size = pool_size(capacity, obj_size);
-        Self::with_layout(path, layout, size).and_then(|inner| {
+        let inner_path = path.clone();
+        Self::with_layout(&path, layout, size).and_then(|inner| {
             // Can't reach sys_pool->uuid_lo field => allocating object to get it
             // TODO: use root object for this workaround
             alloc(inner, 1, 10000).map(|mut oid| {
                 let uuid_lo = oid.pool_uuid_lo();
                 unsafe { pmemobj_free(&mut oid as *mut PMEMoid) };
-                Self { inner, uuid_lo }
+                Self {
+                    inner,
+                    uuid_lo,
+                    inner_path,
+                    rm_on_drop: false,
+                }
             })
         })
     }
@@ -393,6 +402,10 @@ impl ObjPool {
         ));
         rkey
     }
+
+    pub fn set_rm_on_drop(&mut self, rm_pool: bool) {
+        self.rm_on_drop = rm_pool;
+    }
 }
 
 impl Drop for ObjPool {
@@ -401,6 +414,9 @@ impl Drop for ObjPool {
         println!("Dropping obj pool {:?}", self.inner);
         unsafe {
             pmemobj_close(self.inner);
+            if self.rm_on_drop {
+                pmempool_rm(self.inner_path.as_ptr(), 0);
+            }
         }
     }
 }
@@ -720,5 +736,52 @@ mod tests {
         allocation_context
             .join()
             .map_err(|_| ErrorKind::GenericError.into())
+    }
+
+    fn path_exists(path: &CStr) -> Result<(), Error> {
+        nix::unistd::access(path, nix::unistd::AccessFlags::F_OK)
+            .map_err(|_| ErrorKind::GenericError.into())
+    }
+
+    fn path_doesnt_exists(path: &CStr) -> Result<(), Error> {
+        path_exists(path)
+            .and(Err(ErrorKind::GenericError.into()))
+            .or(Ok(()))
+    }
+
+    fn path_rm(path: &CStr) -> Result<(), Error> {
+        nix::unistd::unlink(path).map_err(|_| ErrorKind::GenericError.into())
+    }
+
+    #[test]
+    fn test_rm_on_drop() -> Result<(), Error> {
+        let obj_size = 0x1000; // 4k
+        let size = 0x100_0000; // 16 Mb
+        let path = {
+            let obj_pool = ObjPool::new::<_, String>(
+                "__pmdk_basic__rm_on_drop.obj",
+                None,
+                obj_size,
+                size / obj_size,
+            )?;
+            obj_pool.inner_path.clone()
+        };
+
+        path_exists(&path)?;
+        path_rm(&path)?;
+        path_doesnt_exists(&path)?;
+
+        let path = {
+            let mut obj_pool = ObjPool::new::<_, String>(
+                "__pmdk_basic__rm_on_drop.obj",
+                None,
+                obj_size,
+                size / obj_size,
+            )?;
+            obj_pool.set_rm_on_drop(true);
+            obj_pool.inner_path.clone()
+        };
+
+        path_doesnt_exists(&path)
     }
 }

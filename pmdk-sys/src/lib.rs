@@ -70,3 +70,10 @@ extern "C" {
 
     pub fn pmem_errormsg() -> *const c_char;
 }
+
+#[link(name = "pmempool", kind = "static")]
+extern "C" {
+    // Utils
+
+    pub fn pmempool_rm(path: *const c_char, flags: c_int) -> c_int;
+}
