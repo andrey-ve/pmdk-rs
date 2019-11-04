@@ -46,6 +46,10 @@ impl pmemoid {
     pub fn pool_uuid_lo(&self) -> u64 {
         self.pool_uuid_lo
     }
+
+    pub fn is_null(&self) -> bool {
+        self.off == 0 && self.pool_uuid_lo == 0
+    }
 }
 
 pub type PMEMoid = pmemoid;

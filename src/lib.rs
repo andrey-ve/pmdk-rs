@@ -24,8 +24,9 @@ use libc::{c_char, c_void};
 use libc::{mode_t, size_t};
 
 use pmdk_sys::obj::{
-    pmemobj_alloc, pmemobj_close, pmemobj_create, pmemobj_direct, pmemobj_free,
-    pmemobj_memcpy_persist, pmemobj_oid, pmemobj_type_num, PMEMobjpool as SysPMEMobjpool,
+    pmemobj_alloc, pmemobj_close, pmemobj_create, pmemobj_direct, pmemobj_first, pmemobj_free,
+    pmemobj_memcpy_persist, pmemobj_next, pmemobj_oid, pmemobj_type_num,
+    PMEMobjpool as SysPMEMobjpool,
 };
 pub use pmdk_sys::PMEMoid;
 
@@ -126,7 +127,7 @@ impl ObjAllocator {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Eq, Hash, PartialEq)]
 pub struct ObjRawKey(*mut c_void);
 
 impl From<*mut c_void> for ObjRawKey {
@@ -168,6 +169,8 @@ impl ObjRawKey {
         self.0
     }
 
+    /// # Safety
+    /// The ruturned slice should not outlive context of self
     pub unsafe fn as_slice<'a>(&self, len: usize) -> &'a [u8] {
         std::slice::from_raw_parts(self.0 as *const u8, len)
     }
@@ -178,6 +181,17 @@ impl ObjRawKey {
 
     pub fn get_type(&self) -> u64 {
         unsafe { pmemobj_type_num(self.as_persistent()) }
+    }
+
+    #[cfg(test)]
+    pub fn as_byte_vec(&self) -> Vec<u8> {
+        unsafe {
+            std::slice::from_raw_parts(
+                &(self.0 as u64) as *const u64 as *const u8,
+                std::mem::size_of::<u64>(),
+            )
+        }
+        .to_owned()
     }
 }
 
@@ -395,6 +409,8 @@ impl ObjPool {
         self.update_by_rawkey(oid.into(), data, None)
     }
 
+    /// # Safety
+    /// Should be called on valid ObjRawKey only
     pub unsafe fn get_by_rawkey(&self, rkey: ObjRawKey, buf: &mut [u8]) -> ObjRawKey {
         buf.copy_from_slice(std::slice::from_raw_parts(
             rkey.as_ptr() as *const u8,
@@ -405,6 +421,10 @@ impl ObjPool {
 
     pub fn set_rm_on_drop(&mut self, rm_pool: bool) {
         self.rm_on_drop = rm_pool;
+    }
+
+    pub fn iter(&self) -> ObjPoolIter {
+        unsafe { pmemobj_first(self.inner) }.into()
     }
 }
 
@@ -421,10 +441,34 @@ impl Drop for ObjPool {
     }
 }
 
+#[derive(Debug)]
+pub struct ObjPoolIter(PMEMoid);
+
+impl From<PMEMoid> for ObjPoolIter {
+    fn from(oid: PMEMoid) -> Self {
+        Self(oid)
+    }
+}
+
+impl Iterator for ObjPoolIter {
+    type Item = ObjRawKey;
+
+    fn next(&mut self) -> Option<<Self as Iterator>::Item> {
+        if !self.0.is_null() {
+            let current = self.0;
+            self.0 = unsafe { pmemobj_next(current) };
+            Some(current.into())
+        } else {
+            None
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    use std::collections::HashMap;
     use std::mem;
     use std::sync::Arc;
 
@@ -532,6 +576,23 @@ mod tests {
             .collect::<Result<Vec<(ObjRawKey, Vec<u8>, u64)>, Error>>()
     }
 
+    fn iter_verify_objs(
+        obj_pool: &ObjPool,
+        keys_vals: Vec<(ObjRawKey, Vec<u8>, u64)>,
+    ) -> Result<Vec<(ObjRawKey, Vec<u8>, u64)>, Error> {
+        let mut hmap = HashMap::new();
+        for (key, val, val_type_num) in keys_vals {
+            hmap.insert(key, (val, val_type_num));
+        }
+        let iter = obj_pool.iter();
+        iter.map(|key| {
+            hmap.remove(&key)
+                .map(|(val, val_type_num)| (key, val, val_type_num))
+                .ok_or_else(|| ErrorKind::GenericError.into())
+        })
+        .collect::<Result<Vec<(ObjRawKey, Vec<u8>, u64)>, Error>>()
+    }
+
     #[test]
     fn create() -> Result<(), Error> {
         let obj_size = 0x1000; // 4k
@@ -587,20 +648,35 @@ mod tests {
         }
     }
 
+    fn update_buf_head(buf: &mut [u8], key: &ObjRawKey) {
+        let key_bytes = key.as_byte_vec();
+        println!("{:?} key:{:x?}", key, key_bytes);
+        buf[..key_bytes.len()].copy_from_slice(key_bytes.as_slice());
+    }
+
+    fn generate_objs(
+        obj_pool: Arc<ObjPool>,
+        aqueue: Arc<ArrayQueue<ObjRawKey>>,
+        nobj: usize,
+    ) -> Result<Vec<(ObjRawKey, Vec<u8>, u64)>, Error> {
+        (0..nobj)
+            .map(|_| {
+                let mut buf = vec![0xafu8; 0x1000]; // 4k
+                let key = aqueue.pop().wrap_err(ErrorKind::GenericError)?;
+                update_buf_head(&mut buf, &key);
+                let key = obj_pool.update_by_rawkey(key, &buf, None)?;
+                Ok((key, buf, TEST_TYPE_NUM))
+            })
+            .collect::<Result<Vec<(ObjRawKey, Vec<u8>, u64)>, Error>>()
+    }
+
     fn update_objs(
         obj_pool: Arc<ObjPool>,
         aqueue: Arc<ArrayQueue<ObjRawKey>>,
         nobj: usize,
         name: &str,
     ) -> Result<(), Error> {
-        let keys_vals = (0..nobj)
-            .map(|_| {
-                let buf = vec![0xafu8; 0x1000]; // 4k
-                let key = aqueue.pop().wrap_err(ErrorKind::GenericError)?;
-                let key = obj_pool.update_by_rawkey(key, &buf, None)?;
-                Ok((key, buf, TEST_TYPE_NUM))
-            })
-            .collect::<Result<Vec<(ObjRawKey, Vec<u8>, u64)>, Error>>()?;
+        let keys_vals = generate_objs(Arc::clone(&obj_pool), aqueue, nobj)?;
         println!("{}:: MEM put: done!", name);
 
         let keys_vals = verify_objs(&obj_pool, keys_vals)?;
@@ -610,6 +686,7 @@ mod tests {
             .into_iter()
             .map(|(key, _, type_num)| {
                 let mut buf1 = vec![0xafu8; 0x800]; // 2k
+                update_buf_head(&mut buf1, &key);
                 let mut buf2 = vec![0xbcu8; 0x800]; // 2k
                 let key = obj_pool.update_by_rawkey(key, &buf2, buf1.len())?;
                 buf1.append(&mut buf2);
@@ -638,6 +715,24 @@ mod tests {
             10,
             "preallocate",
         )
+    }
+
+    #[test]
+    fn verify_iter() -> Result<(), Error> {
+        let capacity = 0x800;
+        let (obj_pool, aqueue) =
+            TmpPool::new_with_capacity("__pmdk_basic__verifyiter_test.obj", 0x1000, capacity)?;
+
+        println!("verify_iter:: allocated {} objects", aqueue.len());
+
+        let aqueue = Arc::new(aqueue);
+        let keys_vals = generate_objs(Arc::clone(&obj_pool), Arc::clone(&aqueue), capacity)?;
+        let keys_vals = iter_verify_objs(&obj_pool, keys_vals)?;
+        if keys_vals.len() == capacity {
+            verify_objs(&obj_pool, keys_vals).map(|_| ())
+        } else {
+            Err(ErrorKind::GenericError.into())
+        }
     }
 
     #[test]

@@ -57,4 +57,7 @@ extern "C" {
     pub fn pmemobj_oid(addr: *const c_void) -> PMEMoid;
 
     pub fn pmemobj_type_num(oid: PMEMoid) -> u64;
+
+    pub fn pmemobj_first(pop: *const PMEMobjpool) -> PMEMoid;
+    pub fn pmemobj_next(oid: PMEMoid) -> PMEMoid;
 }
