@@ -3,7 +3,7 @@
 // Use is subject to license terms.
 //
 
-#![doc(html_root_url = "https://docs.rs/pmdk/0.5.0")]
+#![doc(html_root_url = "https://docs.rs/pmdk/0.5.1")]
 #![warn(clippy::use_self)]
 #![warn(deprecated_in_future)]
 #![warn(future_incompatible)]
