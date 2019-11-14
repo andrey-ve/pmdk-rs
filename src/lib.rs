@@ -195,8 +195,8 @@ impl ObjRawKey {
     }
 }
 
-unsafe impl std::marker::Send for ObjRawKey {}
-unsafe impl std::marker::Sync for ObjRawKey {}
+unsafe impl Send for ObjRawKey {}
+unsafe impl Sync for ObjRawKey {}
 
 #[derive(Debug)]
 pub struct ObjPool {
@@ -206,8 +206,8 @@ pub struct ObjPool {
     rm_on_drop: bool,
 }
 
-unsafe impl std::marker::Send for ObjPool {}
-unsafe impl std::marker::Sync for ObjPool {}
+unsafe impl Send for ObjPool {}
+unsafe impl Sync for ObjPool {}
 
 impl ObjPool {
     fn with_layout<S: Into<String>>(
@@ -443,6 +443,8 @@ impl Drop for ObjPool {
 
 #[derive(Debug)]
 pub struct ObjPoolIter(PMEMoid);
+
+unsafe impl Send for ObjPoolIter {}
 
 impl From<PMEMoid> for ObjPoolIter {
     fn from(oid: PMEMoid) -> Self {
