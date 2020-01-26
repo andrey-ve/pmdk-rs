@@ -60,4 +60,8 @@ extern "C" {
 
     pub fn pmemobj_first(pop: *const PMEMobjpool) -> PMEMoid;
     pub fn pmemobj_next(oid: PMEMoid) -> PMEMoid;
+
+    pub fn pmemobj_ctl_exec(pop: *mut PMEMobjpool, name: *const c_char, arg: *mut c_void) -> c_int;
+    pub fn pmemobj_ctl_get(pop: *mut PMEMobjpool, name: *const c_char, arg: *mut c_void) -> c_int;
+    pub fn pmemobj_ctl_set(pop: *mut PMEMobjpool, name: *const c_char, arg: *mut c_void) -> c_int;
 }
