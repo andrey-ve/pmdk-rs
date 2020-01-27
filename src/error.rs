@@ -38,6 +38,9 @@ pub enum Kind {
 
     #[fail(display = "PMDK no space in queue")]
     PmdkNoSpaceInQueueError,
+
+    #[fail(display = "PMDK key doesn't belong to pool")]
+    PmdkKeyNotBelongToPool,
 }
 
 impl Fail for Error {

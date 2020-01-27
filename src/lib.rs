@@ -20,13 +20,13 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crossbeam_queue::ArrayQueue;
-use libc::{c_char, c_void};
+use libc::{c_char, c_unsigned, c_void};
 use libc::{mode_t, size_t};
 
 use pmdk_sys::obj::{
-    pmemobj_alloc, pmemobj_close, pmemobj_create, pmemobj_direct, pmemobj_first, pmemobj_free,
-    pmemobj_memcpy_persist, pmemobj_next, pmemobj_oid, pmemobj_type_num,
-    PMEMobjpool as SysPMEMobjpool,
+    pmemobj_alloc, pmemobj_close, pmemobj_create, pmemobj_ctl_exec, pmemobj_ctl_get,
+    pmemobj_ctl_set, pmemobj_direct, pmemobj_first, pmemobj_free, pmemobj_memcpy_persist,
+    pmemobj_next, pmemobj_oid, pmemobj_type_num, PMEMobjpool as SysPMEMobjpool,
 };
 pub use pmdk_sys::PMEMoid;
 
@@ -36,6 +36,12 @@ pub use crate::error::{Error, Kind as ErrorKind};
 use pmdk_sys::pmempool_rm;
 
 mod error;
+
+fn str_as_c_char(s: &str) -> Result<*const c_char, Error> {
+    CString::new(s)
+        .map(|cs| cs.as_ptr() as *const c_char)
+        .wrap_err(ErrorKind::GenericError)
+}
 
 fn alloc(pop: *mut SysPMEMobjpool, size: usize, data_type: u64) -> Result<PMEMoid, Error> {
     let mut oid = PMEMoid::default();
@@ -235,17 +241,15 @@ impl ObjPool {
         }
     }
 
-    pub fn new<P: AsRef<Path>, S: Into<String>>(
+    pub fn with_size<P: AsRef<Path>, S: Into<String>>(
         path: P,
         layout: Option<S>,
-        obj_size: usize,
-        capacity: usize,
+        size: usize,
     ) -> Result<Self, Error> {
         let path = path.as_ref().to_str().map_or_else(
             || Err(ErrorKind::PathError.into()),
             |path| CString::new(path).wrap_err(ErrorKind::PathError),
         )?;
-        let size = pool_size(capacity, obj_size);
         let inner_path = path.clone();
         Self::with_layout(&path, layout, size).and_then(|inner| {
             // Can't reach sys_pool->uuid_lo field => allocating object to get it
@@ -261,6 +265,16 @@ impl ObjPool {
                 }
             })
         })
+    }
+
+    pub fn new<P: AsRef<Path>, S: Into<String>>(
+        path: P,
+        layout: Option<S>,
+        obj_size: usize,
+        capacity: usize,
+    ) -> Result<Self, Error> {
+        let size = pool_size(capacity, obj_size);
+        Self::with_size(path, layout, size)
     }
 
     pub fn set_capacity(
@@ -409,6 +423,15 @@ impl ObjPool {
         self.update_by_rawkey(oid.into(), data, None)
     }
 
+    pub fn remove(&self, key: ObjRawKey) -> Result<(), Error> {
+        let mut oid = PMEMoid::from(key);
+        if self.uuid_lo != oid.pool_uuid_lo() {
+            return Err(ErrorKind::PmdkKeyNotBelongToPool.into());
+        }
+        unsafe { pmemobj_free(&mut oid as *mut PMEMoid) };
+        Ok(())
+    }
+
     /// # Safety
     /// Should be called on valid ObjRawKey only
     pub unsafe fn get_by_rawkey(&self, rkey: ObjRawKey, buf: &mut [u8]) -> ObjRawKey {
@@ -425,6 +448,12 @@ impl ObjPool {
 
     pub fn iter(&self) -> ObjPoolIter {
         unsafe { pmemobj_first(self.inner) }.into()
+    }
+
+    pub fn thread_arena_init(&mut self, narenas: usize) {
+        let arena_id: c_usigned;
+        let name = str_as_c_char("heap.arena.create")?;
+        let ret = pmemobj_ctl_exec(self.inner, name, &mut arena_id as *mut c_usigned);
     }
 }
 
