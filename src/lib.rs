@@ -450,10 +450,26 @@ impl ObjPool {
         unsafe { pmemobj_first(self.inner) }.into()
     }
 
-    pub fn thread_arena_init(&mut self, narenas: usize) {
-        let arena_id: c_usigned;
+    /// Create and set arena for current thread
+    /// # Safety
+    /// Working with raw pointers potentially unsafe
+    pub unsafe fn thread_arena_init(&self) -> Result<(), Error> {
+        let mut arena_id: u32 = 0;
         let name = str_as_c_char("heap.arena.create")?;
-        let ret = pmemobj_ctl_exec(self.inner, name, &mut arena_id as *mut c_usigned);
+        let _ret = pmemobj_ctl_exec(self.inner, name, &mut arena_id as *mut u32 as *mut c_void);
+        let name = str_as_c_char("heap.thread.arena_id")?;
+        let _ret = pmemobj_ctl_set(self.inner, name, &mut arena_id as *mut u32 as *mut c_void);
+        Ok(())
+    }
+
+    /// Get heap arena id
+    /// # Safety
+    /// Working with raw pointers potentially unsafe
+    pub unsafe fn thread_arena_get(&self) -> Result<u32, Error> {
+        let mut arena_id: u32 = 0;
+        let name = str_as_c_char("heap.thread.arena_id")?;
+        let _ret = pmemobj_ctl_get(self.inner, name, &mut arena_id as *mut u32 as *mut c_void);
+        Ok(arena_id)
     }
 }
 
