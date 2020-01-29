@@ -20,7 +20,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crossbeam_queue::ArrayQueue;
-use libc::{c_char, c_unsigned, c_void};
+use libc::{c_char, c_void};
 use libc::{mode_t, size_t};
 
 use pmdk_sys::obj::{
