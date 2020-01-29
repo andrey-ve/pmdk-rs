@@ -13,6 +13,10 @@
 #![warn(rust_2018_idioms)]
 #![warn(unused)]
 #![deny(warnings)]
+#![feature(test)]
+
+#[allow(unused_extern_crates)]
+extern crate test;
 
 use std::convert::TryInto;
 use std::ffi::{CStr, CString};
@@ -522,7 +526,9 @@ mod tests {
     use core::ops::Deref;
     use crossbeam_queue::ArrayQueue;
     use futures::future::Future;
-    use futures_cpupool::CpuPool;
+    use futures_cpupool::{Builder as CpuPoolBuilder, CpuPool};
+    #[allow(unused_imports)]
+    use test::Bencher;
     use tokio::run;
 
     use crate::error::{Kind as ErrorKind, WrapErr};
@@ -553,6 +559,13 @@ mod tests {
             let dir = tempfile::tempdir().map_err(|_| ErrorKind::GenericError)?;
             let path = dir.path().join(name);
             Ok((dir, path))
+        }
+
+        fn new_with_size(name: &str, size: usize) -> Result<Self, Error> {
+            let (dir, path) = Self::prepare(name)?;
+            ObjPool::with_size::<_, String>(path, None, size)
+                .map(Arc::new)
+                .map(|inner| Self { inner, dir })
         }
 
         fn new(name: &str, obj_size: usize, capacity: usize) -> Result<Self, Error> {
@@ -925,5 +938,93 @@ mod tests {
         };
 
         path_doesnt_exists(&path)
+    }
+
+    // sizes in kbytes
+    const RANDOM_DATA_SIZE: usize = 1024 * 1024;
+    static IO_SIZES: &[usize] = &[1024 * 1024, 128 * 1024, 64 * 1024, 32 * 1024, 16 * 1024];
+
+    fn var_alloc_task(pool: Arc<ObjPool>, io_sizes_start: usize, nobj: usize) -> Result<(), Error> {
+        use rand::Rng;
+        let arena_id = unsafe { pool.thread_arena_get() }?;
+        let io_sizes: &'static [usize] = &IO_SIZES[io_sizes_start..];
+
+        let mut rng = rand::thread_rng();
+        let random_data = (0..RANDOM_DATA_SIZE)
+            .map(|_| rng.gen_range(0, std::u8::MAX))
+            .collect::<Vec<u8>>();
+        let keys = (0..nobj)
+            .map(|i| {
+                let size = io_sizes[(i + arena_id as usize) % io_sizes.len()];
+                pool.put(&random_data[0..size], 0)
+            })
+            .collect::<Result<Vec<ObjRawKey>, Error>>()?;
+        keys.into_iter()
+            .map(|key| pool.remove(key))
+            .collect::<Result<Vec<()>, Error>>()
+            .map(|_| ())
+    }
+
+    fn var_alloc_prepare(size: usize, nthreads: usize) -> Result<(TmpPool, CpuPool), Error> {
+        let obj_pool = TmpPool::new_with_size("__pmdk_var_alloc_basic_test.obj", size)?;
+
+        let obj_pool_clone = obj_pool.clone();
+        let threads = CpuPoolBuilder::new()
+            .pool_size(nthreads)
+            .after_start(move || unsafe {
+                obj_pool_clone
+                    .clone()
+                    .thread_arena_init()
+                    .expect("PMEM thread var size allocator creation failed!");
+            })
+            .create();
+        Ok((obj_pool, threads))
+    }
+
+    fn var_alloc_run(
+        obj_pool: Arc<ObjPool>,
+        threads: CpuPool,
+        nthreads: usize,
+        nobj: usize,
+        io_sizes_start: usize,
+    ) -> Result<(), Error> {
+        futures::future::join_all((0..nthreads).map(move |_| {
+            let obj_pool_for_task = obj_pool.clone();
+            threads.spawn_fn(move || {
+                var_alloc_task(Arc::clone(&obj_pool_for_task), io_sizes_start, nobj)
+            })
+        }))
+        .wait()
+        .map(|_| ())
+    }
+
+    #[test]
+    fn var_alloc_basic() -> Result<(), Error> {
+        let size = 0xa0_000_000;
+        let nthreads = 10;
+        let nobj = 1000;
+        let (
+            TmpPool {
+                inner: pool,
+                dir: _tmp_dir,
+            },
+            threads,
+        ) = var_alloc_prepare(size, nthreads)?;
+        var_alloc_run(Arc::clone(&pool), threads, nthreads, nobj, 1)
+    }
+
+    #[bench]
+    fn bench_var_alloc(b: &mut Bencher) {
+        let size = 0xa0_000_000;
+        let nthreads = 10;
+        let nobj = 10;
+        let (
+            TmpPool {
+                inner: pool,
+                dir: _tmp_dir,
+            },
+            threads,
+        ) = var_alloc_prepare(size, nthreads).expect("bench var alloc prepare");
+        b.iter(|| var_alloc_run(Arc::clone(&pool), threads.clone(), nthreads, nobj, 1));
     }
 }

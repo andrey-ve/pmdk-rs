@@ -32,5 +32,6 @@ pmdk-sys = { path = "pmdk-sys", version = "0.5.0" }
 [dev-dependencies]
 futures-cpupool = "0.1"
 nix = "0.15"
+rand = "0.5"
 tokio = "0.1"
 tempfile = "3.1"
